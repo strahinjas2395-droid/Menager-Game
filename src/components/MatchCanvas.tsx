@@ -216,6 +216,7 @@ export default function MatchCanvas({
 
     let destroyed = false;
     let game: import("phaser").Game | null = null;
+    let resizeObserver: ResizeObserver | null = null;
 
     import("phaser").then((Phaser) => {
       if (destroyed || !containerRef.current) return;
@@ -250,10 +251,14 @@ export default function MatchCanvas({
         render: { antialias: true, antialiasGL: true },
         scene: [Scene],
       });
+      resizeObserver = new ResizeObserver(() => game?.scale.refresh());
+      resizeObserver.observe(containerRef.current);
     });
 
     return () => {
       destroyed = true;
+      resizeObserver?.disconnect();
+      resizeObserver = null;
       if (sceneRef.current) {
         // scene booted: MatchScene.destroy kills the Phaser.Game
         sceneRef.current.destroy();
@@ -271,8 +276,8 @@ export default function MatchCanvas({
   return (
     <div
       ref={containerRef}
-      className="aspect-[1000/650] w-full overflow-hidden rounded-lg border border-white/10"
-      style={{ background: "#1f5c22" }}
+      className="match-canvas flex h-full min-h-0 w-full items-center justify-center overflow-hidden rounded-lg border border-white/10"
+      style={{ background: "#102d18" }}
     />
   );
 }

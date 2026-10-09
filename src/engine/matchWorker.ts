@@ -7,11 +7,12 @@
  */
 import { MatchSimulator, type MatchSnapshot, type Side, type TeamSide } from "./matchSimulator";
 import type { MatchEvent, TacticalSetup } from "../types";
+import type { PlayerDirectives } from "./directives";
 
 interface InitPayload {
   home: TeamSide;
   away: TeamSide;
-  options: { seed: number; timeScale?: number };
+  options: { seed: number; timeScale?: number; worldScale?: number };
 }
 
 type InMsg =
@@ -23,7 +24,8 @@ type InMsg =
   | { type: "speed"; value: 1 | 2 | 4 | 8 }
   | { type: "skip" }
   | { type: "sub"; side: Side; starterIdx: number; benchIdx: number }
-  | { type: "tactics"; side: Side; tactics: TacticalSetup };
+  | { type: "tactics"; side: Side; tactics: TacticalSetup }
+  | { type: "directives"; side: Side; directives: Record<string, PlayerDirectives> };
 
 let sim: MatchSimulator | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -103,10 +105,11 @@ self.onmessage = (ev: MessageEvent<InMsg>) => {
       if (sim) post({ type: "state", state: sim.getState() });
       break;
     case "tactics":
-      if (sim) {
-        const side = msg.side === "home" ? sim.home : sim.away;
-        (side as { tactics: TacticalSetup }).tactics = msg.tactics;
-      }
+      sim?.updateTactics(msg.side, msg.tactics);
+      if (sim) post({ type: "state", state: sim.getState() });
+      break;
+    case "directives":
+      sim?.updateDirectives(msg.side, msg.directives);
       break;
   }
 };

@@ -16,7 +16,7 @@ Other scripts:
 
 ```bash
 npm run typecheck  # tsc --noEmit
-npm test           # vitest (40 specs)
+npm test           # vitest (49 specs)
 npm run build      # production build
 ```
 
@@ -28,10 +28,17 @@ npm run build      # production build
   (weeks 7/14/21/28/35), an 8-group continental championship with single-leg knockouts
   (weeks 30/33/36/40), and transfer windows in weeks 1–4 and 19–22.
 - **Live matches**: pure-TypeScript engine simulated in a Web Worker at 10 Hz, rendered as
-  dots on a Phaser pitch — pause, 1/2/4/8× speed, skip, half-time subs, live stats and
-  commentary, extra time & penalty shootouts in knockouts.
-- **Tactics**: 32 formations, draggable pitch positions, team instructions, play styles,
-  set-piece takers and captain.
+  dots on a Phaser pitch — pause, 1/2/4/8× speed, skip, live stats and commentary, extra
+  time & penalty shootouts in knockouts. A match-day tactical console applies formation,
+  style, team instructions, individual instructions and substitutions without restarting.
+- **Tactical simulation**: distinct build-up, settled attack, defensive-block, counterattack
+  and counter-press phases; role/formation-aware movement; short combinations, recycling,
+  switches, through balls, target-man play, overlaps, crosses and cutbacks; variable ball
+  speeds; aerial, shielding, tackling and loose-ball duels driven by player attributes.
+- **Tactics setup**: 32 formations, draggable pitch positions, dot-based team instructions,
+  set-piece takers, captain, plus persistent free-text instructions for every player. A
+  deterministic tactical interpreter displays what it understood and feeds those directives
+  into each player's movement and decisions.
 - **Transfers**: scouting search, bid/counter negotiation, contract demands, and an AI
   transfer market that moves players during open windows.
 - **Saves** live in IndexedDB (auto-save after every match) with JSON export/import

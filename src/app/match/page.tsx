@@ -2,12 +2,18 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Pause, Play, FastForward, Gauge } from "lucide-react";
+import { Pause, Play, FastForward, Gauge, SlidersHorizontal, X, Check } from "lucide-react";
 import MatchCanvas, { type MatchScene } from "@/components/MatchCanvas";
+import StepDots from "@/components/StepDots";
 import { getMatchContext, useGameStore, type MatchContext } from "@/store/gameStore";
 import type { MatchSnapshot, Side } from "@/engine/matchSimulator";
-import type { MatchEvent, MatchResult, MatchStats } from "@/types";
-import { CompetitionType, MatchEventType } from "@/types";
+import type { MatchEvent, MatchResult, MatchStats, TacticalSetup } from "@/types";
+import {
+  CompetitionType, DefensiveLine, MatchEventType, MentalityLevel, PlayStyle,
+  PressingIntensity, TempoSetting, TimeWasting, WidthSetting,
+} from "@/types";
+import { FORMATION_NAMES } from "@/engine/formations";
+import { parseInstructions, parseSquadInstructions, summarizeDirectives } from "@/engine/directives";
 import { expectedGoals } from "@/engine/leagueEngine";
 import { penaltyShootout } from "@/engine/cupEngine";
 import { SeededRNG } from "@/database/rng";
@@ -56,8 +62,27 @@ function MatchScreen() {
   const [etGoals, setEtGoals] = useState<{ h: number; a: number } | null>(null);
   const [pens, setPens] = useState<{ home: number; away: number } | null>(null);
   const [showStats, setShowStats] = useState(false);
+  const [showTactics, setShowTactics] = useState(false);
+  const [liveTactics, setLiveTactics] = useState<TacticalSetup | null>(null);
+  const [liveInstructions, setLiveInstructions] = useState<Record<string, string>>({});
+  const resumeAfterTactics = useRef(false);
 
   const isKnockout = ctx?.fixture.competitionType !== CompetitionType.League;
+  const userSide: Side = ctx?.home.isUserTeam ? "home" : "away";
+
+  useEffect(() => {
+    if (!ctx) return;
+    const source = ctx.home.isUserTeam ? ctx.home.tactics : ctx.away.tactics;
+    setLiveTactics({
+      ...source,
+      positionOverrides: { ...source.positionOverrides },
+      setPieces: { ...source.setPieces },
+    });
+    const team = ctx.home.isUserTeam ? ctx.home : ctx.away;
+    setLiveInstructions(Object.fromEntries(
+      [...team.starters, ...team.bench].map((p) => [p.id, p.individualInstructions ?? ""]),
+    ));
+  }, [ctx]);
 
   // --- boot worker
   useEffect(() => {
@@ -150,13 +175,46 @@ function MatchScreen() {
     post({ type: "skip" });
   };
 
+  const openTactics = () => {
+    resumeAfterTactics.current = !paused && !halfTime && !fullTime;
+    if (resumeAfterTactics.current) {
+      post({ type: "pause" });
+      setPaused(true);
+    }
+    setShowTactics(true);
+  };
+
+  const closeTactics = () => {
+    setShowTactics(false);
+    if (resumeAfterTactics.current) {
+      post({ type: "resume" });
+      post({ type: "speed", value: speed });
+      setPaused(false);
+    }
+    resumeAfterTactics.current = false;
+  };
+
+  const applyLiveTactics = () => {
+    if (liveTactics) post({ type: "tactics", side: userSide, tactics: liveTactics });
+    const matchPlayers = userSide === "home" ? ctx?.home.starters.concat(ctx.home.bench) : ctx?.away.starters.concat(ctx.away.bench);
+    if (matchPlayers) {
+      const withLiveText = matchPlayers.map((p) => ({ ...p, individualInstructions: liveInstructions[p.id] ?? "" }));
+      post({ type: "directives", side: userSide, directives: parseSquadInstructions(withLiveText) });
+    }
+    closeTactics();
+  };
+
+  const makeSubstitution = (off = pendingSub.off, on = pendingSub.on) => {
+    post({ type: "sub", side: userSide, starterIdx: off, benchIdx: on });
+    setPendingSub({ off, on, dirty: false });
+  };
+
   const resumeSecondHalf = () => {
     setHalfTime(false);
     setPaused(false);
     post({ type: "resumeHalf" });
     post({ type: "speed", value: speed });
     if (pendingSub.dirty && ctx) {
-      const userSide: Side = ctx.home.isUserTeam ? "home" : "away";
       post({ type: "sub", side: userSide, starterIdx: pendingSub.off, benchIdx: pendingSub.on });
       setPendingSub({ off: 0, on: 0, dirty: false });
     }
@@ -255,83 +313,106 @@ function MatchScreen() {
         )}
       </header>
 
-      {/* pitch */}
-      <div className="relative flex-shrink px-2 py-2">
-        <MatchCanvas
-          sceneRef={sceneRef}
-          homeColor={homeClub.primaryColor}
-          awayColor={awayClub.primaryColor}
-          homeNumbers={ctx.home.starters.map((p) => p.shirtNumber)}
-          awayNumbers={ctx.away.starters.map((p) => p.shirtNumber)}
-        />
-        {paused && !halfTime && !fullTime && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-            <span className="rounded-full bg-black/70 px-4 py-2 text-sm font-bold">PAUSED</span>
-          </div>
-        )}
-      </div>
+      <div className="match-stage">
+        {/* Pitch is constrained by both available width and height, so all four
+            touchlines remain visible in portrait and landscape. */}
+        <div className="match-pitch-shell relative p-2">
+          <MatchCanvas
+            sceneRef={sceneRef}
+            homeColor={homeClub.primaryColor}
+            awayColor={awayClub.primaryColor}
+            homeNumbers={ctx.home.starters.map((p) => p.shirtNumber)}
+            awayNumbers={ctx.away.starters.map((p) => p.shirtNumber)}
+          />
+          {paused && !halfTime && !fullTime && !showTactics && (
+            <div className="absolute inset-2 flex items-center justify-center rounded-lg bg-black/40">
+              <span className="rounded-full bg-black/70 px-4 py-2 text-sm font-bold">PAUSED</span>
+            </div>
+          )}
+        </div>
 
-      {/* controls + events */}
-      <div className="flex flex-1 min-h-0 flex-col gap-2 px-3 pb-1 sm:flex-row">
-        <div className="min-h-0 flex-1 overflow-y-auto rounded-xl bg-card/70 p-2">
-          <div className="stat-label mb-1">Commentary</div>
-          <ul className="space-y-1">
-            {[...events]
-              .slice(-6)
-              .reverse()
-              .map((e, i) => (
-                <li key={`${e.minute}-${i}-${e.text}`} className="text-[11px] leading-snug text-white/75">
+        {/* Match desk: in portrait it occupies a fixed strip below the whole
+            pitch; in landscape it becomes a side rail. */}
+        <aside className="match-sidebar gap-2 border-t border-white/10 px-3 py-2 landscape:border-l landscape:border-t-0">
+          <div className="flex shrink-0 flex-wrap items-center justify-center gap-1.5">
+            <button
+              onClick={togglePause}
+              disabled={halfTime || fullTime}
+              className="btn-dark flex items-center gap-1 px-2.5 py-1.5 text-[11px] disabled:opacity-30"
+            >
+              {paused ? <Play size={13} /> : <Pause size={13} />}
+              {paused ? "Resume" : "Pause"}
+            </button>
+            <div className="flex gap-1">
+              {([1, 2, 4, 8] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => changeSpeed(s)}
+                  className={`rounded-lg px-2 py-1.5 text-[10px] font-bold transition ${
+                    speed === s ? "bg-gold text-navy" : "border border-white/10 bg-card text-white/60"
+                  }`}
+                >
+                  {s}x
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={openTactics}
+              disabled={fullTime}
+              className="flex items-center gap-1 rounded-lg border border-gold/40 bg-gold/10 px-2.5 py-1.5 text-[11px] font-bold text-gold disabled:opacity-30"
+            >
+              <SlidersHorizontal size={13} /> Tactics
+            </button>
+            <button onClick={() => setShowStats((v) => !v)} className="btn-dark flex items-center gap-1 px-2 py-1.5 text-[11px]">
+              <Gauge size={13} /> Stats
+            </button>
+            <button onClick={skip} disabled={halfTime || fullTime}
+              className="btn-dark flex items-center gap-1 px-2 py-1.5 text-[11px] disabled:opacity-30" title="Skip to half / full time">
+              <FastForward size={13} /> Skip
+            </button>
+          </div>
+
+          {liveTactics && (
+            <div className="shrink-0 truncate text-center text-[9px] text-white/35">
+              {liveTactics.formation} · {prettyPlayStyle(liveTactics.playStyle)} · mentality {liveTactics.mentality + 1}/7
+            </div>
+          )}
+
+          <div className="min-h-0 flex-1 overflow-y-auto rounded-xl bg-card/70 p-2">
+            <div className="stat-label mb-1">Live Commentary</div>
+            <ul className="space-y-1">
+              {[...events].slice(-9).reverse().map((e, i) => (
+                <li key={`${e.minute}-${i}-${e.text}`} className="text-[10px] leading-snug text-white/75">
                   <span className="font-bold text-gold">{e.minute}&apos;</span> {e.text}
                 </li>
               ))}
-            {events.length === 0 && <li className="text-[11px] text-white/40">Kick off pending…</li>}
-          </ul>
-        </div>
-
-        <div className="flex flex-row items-center justify-center gap-2 sm:flex-col sm:justify-start">
-          <button
-            onClick={togglePause}
-            disabled={halfTime || fullTime}
-            className="btn-dark flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-30"
-          >
-            {paused ? <Play size={14} /> : <Pause size={14} />}
-            {paused ? "Resume" : "Pause"}
-          </button>
-          <div className="flex gap-1.5">
-            {([1, 2, 4, 8] as const).map((s) => (
-              <button
-                key={s}
-                onClick={() => changeSpeed(s)}
-                className={`rounded-lg px-2.5 py-2 text-xs font-bold transition ${
-                  speed === s ? "bg-gold text-navy" : "bg-card text-white/60 border border-white/10"
-                }`}
-              >
-                {s}x
-              </button>
-            ))}
+              {events.length === 0 && <li className="text-[10px] text-white/40">Kick off pending…</li>}
+            </ul>
           </div>
-          <button
-            onClick={skip}
-            disabled={halfTime || fullTime}
-            className="btn-dark flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-30"
-            title="Skip to half / full time"
-          >
-            <FastForward size={14} /> Skip
-          </button>
-          <button
-            onClick={() => setShowStats((v) => !v)}
-            className="btn-dark flex items-center gap-1.5 px-3 py-2 text-xs"
-          >
-            <Gauge size={14} /> Stats
-          </button>
-        </div>
+        </aside>
       </div>
 
-      {/* lineups */}
-      <div className="grid max-h-24 grid-cols-2 gap-2 overflow-y-auto px-3 pb-2 text-[10px]">
-        <LineupCol entries={snapshot?.homeLineup ?? []} color={homeClub.primaryColor} />
-        <LineupCol entries={snapshot?.awayLineup ?? []} color={awayClub.primaryColor} align="right" />
-      </div>
+      {showTactics && liveTactics && (
+        <LiveTacticsPanel
+          tactics={liveTactics}
+          onChange={setLiveTactics}
+          onApply={applyLiveTactics}
+          onClose={closeTactics}
+          home={homeClub.shortName}
+          away={awayClub.shortName}
+          score={`${displayHome}-${displayAway}`}
+          minute={clock}
+          currentLineup={userSide === "home" ? snapshot?.homeLineup ?? [] : snapshot?.awayLineup ?? []}
+          bench={userSide === "home" ? ctx.home.bench : ctx.away.bench}
+          pendingSub={pendingSub}
+          onPendingSub={setPendingSub}
+          onSub={makeSubstitution}
+          atHalfTime={halfTime}
+          instructionPlayers={userSide === "home" ? ctx.home.starters.concat(ctx.home.bench) : ctx.away.starters.concat(ctx.away.bench)}
+          instructionText={liveInstructions}
+          onInstructionText={setLiveInstructions}
+        />
+      )}
 
       {showStats && snapshot && (
         <StatsOverlay stats={snapshot.stats} onClose={() => setShowStats(false)}
@@ -372,7 +453,10 @@ function MatchScreen() {
               </div>
             </div>
 
-            <button onClick={resumeSecondHalf} className="btn-gold mt-4 w-full">
+            <button onClick={openTactics} className="btn-dark mt-4 flex w-full items-center justify-center gap-2 text-xs">
+              <SlidersHorizontal size={14} /> Adjust Tactics
+            </button>
+            <button onClick={resumeSecondHalf} className="btn-gold mt-2 w-full">
               Start Second Half
             </button>
           </div>
@@ -418,6 +502,189 @@ function MatchScreen() {
       )}
     </main>
   );
+}
+
+const LIVE_SLIDERS: {
+  key: "tempo" | "passingLength" | "defensiveLine" | "pressing" | "width" | "mentality";
+  label: string;
+  min: number;
+  max: number;
+  low: string;
+  high: string;
+}[] = [
+  { key: "mentality", label: "Mentality", min: 0, max: 6, low: "Defend", high: "Attack" },
+  { key: "tempo", label: "Tempo", min: 0, max: 4, low: "Patient", high: "Urgent" },
+  { key: "passingLength", label: "Passing", min: 0, max: 4, low: "Short", high: "Direct" },
+  { key: "defensiveLine", label: "Defensive line", min: 0, max: 4, low: "Deep", high: "High" },
+  { key: "pressing", label: "Pressing", min: 0, max: 4, low: "Hold", high: "Hunt" },
+  { key: "width", label: "Width", min: 0, max: 4, low: "Narrow", high: "Wide" },
+];
+
+function LiveTacticsPanel({
+  tactics, onChange, onApply, onClose, home, away, score, minute,
+  currentLineup, bench, pendingSub, onPendingSub, onSub, atHalfTime,
+  instructionPlayers, instructionText, onInstructionText,
+}: {
+  tactics: TacticalSetup;
+  onChange: (t: TacticalSetup) => void;
+  onApply: () => void;
+  onClose: () => void;
+  home: string;
+  away: string;
+  score: string;
+  minute: string;
+  currentLineup: MatchSnapshot["homeLineup"];
+  bench: MatchContext["home"]["bench"];
+  pendingSub: { off: number; on: number; dirty: boolean };
+  onPendingSub: React.Dispatch<React.SetStateAction<{ off: number; on: number; dirty: boolean }>>;
+  onSub: (off: number, on: number) => void;
+  atHalfTime: boolean;
+  instructionPlayers: MatchContext["home"]["starters"];
+  instructionText: Record<string, string>;
+  onInstructionText: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+}) {
+  const [instructionPlayerId, setInstructionPlayerId] = useState(instructionPlayers[0]?.id ?? "");
+  const set = <K extends keyof TacticalSetup>(key: K, value: TacticalSetup[K]) =>
+    onChange({ ...tactics, [key]: value });
+  const activeIds = new Set(currentLineup.map((p) => p.playerId));
+  const availableBench = bench.map((p, i) => ({ p, i })).filter(({ p }) => !activeIds.has(p.id));
+  const selectedBenchIdx = availableBench.some(({ i }) => i === pendingSub.on)
+    ? pendingSub.on
+    : (availableBench[0]?.i ?? 0);
+
+  const preset = (kind: "protect" | "control" | "chase") => {
+    if (kind === "protect") {
+      onChange({ ...tactics, playStyle: PlayStyle.ParkTheBus, mentality: MentalityLevel.Defensive,
+        tempo: TempoSetting.Slow, passingLength: TempoSetting.Fast, defensiveLine: DefensiveLine.Deep,
+        pressing: PressingIntensity.Low, width: WidthSetting.Narrow, timeWasting: TimeWasting.Always });
+    } else if (kind === "control") {
+      onChange({ ...tactics, playStyle: PlayStyle.PossessionBased, mentality: MentalityLevel.Balanced,
+        tempo: TempoSetting.Normal, passingLength: TempoSetting.Slow, defensiveLine: DefensiveLine.Normal,
+        pressing: PressingIntensity.Standard, width: WidthSetting.Normal, timeWasting: TimeWasting.Never });
+    } else {
+      onChange({ ...tactics, playStyle: PlayStyle.GegenpressingStyle, mentality: MentalityLevel.Attacking,
+        tempo: TempoSetting.Fast, passingLength: TempoSetting.Normal, defensiveLine: DefensiveLine.High,
+        pressing: PressingIntensity.High, width: WidthSetting.Wide, timeWasting: TimeWasting.Never });
+    }
+  };
+
+  return (
+    <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/80 p-2 sm:p-4">
+      <section className="flex max-h-full w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-gold/35 bg-navy shadow-2xl">
+        <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-panel px-4 py-3">
+          <div>
+            <h2 className="flex items-center gap-2 font-black text-gold"><SlidersHorizontal size={16} /> Match Tactics</h2>
+            <p className="mt-0.5 text-[10px] text-white/45">{home} {score} {away} · {minute} · match paused</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-2 text-white/50 hover:bg-white/10 hover:text-white" aria-label="Close tactics">
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="grid grid-cols-3 gap-2">
+            <button onClick={() => preset("protect")} className="rounded-lg border border-blue-300/20 bg-blue-400/10 py-2 text-[10px] font-bold text-blue-200">Protect lead</button>
+            <button onClick={() => preset("control")} className="rounded-lg border border-white/15 bg-white/5 py-2 text-[10px] font-bold text-white/70">Control game</button>
+            <button onClick={() => preset("chase")} className="rounded-lg border border-red-300/20 bg-red-400/10 py-2 text-[10px] font-bold text-red-200">Chase goal</button>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <label className="text-[10px] text-white/45">
+              Formation
+              <select value={tactics.formation} onChange={(e) => set("formation", e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/10 bg-card px-2 py-2 text-xs font-semibold text-white outline-none focus:border-gold">
+                {FORMATION_NAMES.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </label>
+            <label className="text-[10px] text-white/45">
+              Play style
+              <select value={tactics.playStyle} onChange={(e) => set("playStyle", e.target.value as PlayStyle)}
+                className="mt-1 w-full rounded-lg border border-white/10 bg-card px-2 py-2 text-xs font-semibold text-white outline-none focus:border-gold">
+                {Object.values(PlayStyle).map((v) => <option key={v} value={v}>{prettyPlayStyle(v)}</option>)}
+              </select>
+            </label>
+          </div>
+
+          <div className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            {LIVE_SLIDERS.map((sl) => (
+              <div key={sl.key}>
+                <div className="flex justify-between text-[10px]"><span className="font-semibold text-white/75">{sl.label}</span><span className="text-gold">{Number(tactics[sl.key]) + 1}/{sl.max + 1}</span></div>
+                <StepDots value={Number(tactics[sl.key])} min={sl.min} max={sl.max}
+                  onChange={(v) => set(sl.key, v as never)} startLabel={sl.low} endLabel={sl.high} ariaLabel={sl.label} />
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid grid-cols-3 gap-2 text-[10px]">
+            <MatchToggle label="Counter" on={tactics.counterAttack} onChange={(v) => set("counterAttack", v)} />
+            <MatchToggle label="Offside trap" on={tactics.offsideTrap} onChange={(v) => set("offsideTrap", v)} />
+            <label className="rounded-lg bg-card p-2 text-white/55">Time wasting
+              <select value={tactics.timeWasting} onChange={(e) => set("timeWasting", e.target.value as TimeWasting)} className="mt-1 w-full bg-transparent text-[10px] font-bold text-white outline-none">
+                {Object.values(TimeWasting).map((v) => <option key={v} value={v} className="bg-card">{v}</option>)}
+              </select>
+            </label>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-white/10 bg-card p-3">
+            <div className="flex items-center justify-between">
+              <span className="stat-label">Live Individual Instruction</span>
+              <span className="text-[9px] text-gold/70">interpreted on Apply</span>
+            </div>
+            <select value={instructionPlayerId} onChange={(e) => setInstructionPlayerId(e.target.value)}
+              className="mt-2 w-full rounded-lg border border-white/10 bg-navy px-2 py-2 text-[10px]">
+              {instructionPlayers.map((p) => <option key={p.id} value={p.id}>#{p.shirtNumber} {p.firstName} {p.lastName} · {p.primaryPosition}</option>)}
+            </select>
+            <textarea value={instructionText[instructionPlayerId] ?? ""}
+              onChange={(e) => onInstructionText((v) => ({ ...v, [instructionPlayerId]: e.target.value }))}
+              placeholder="Tell this player what to do…" rows={2} maxLength={300}
+              className="mt-2 w-full resize-none rounded-lg border border-white/10 bg-navy p-2 text-[10px] leading-relaxed outline-none focus:border-gold" />
+            <div className="mt-2 flex flex-wrap gap-1">
+              {summarizeDirectives(parseInstructions(instructionText[instructionPlayerId] ?? "")).map((label) => (
+                <span key={label} className="rounded-full bg-gold/10 px-1.5 py-1 text-[8px] font-semibold text-gold">{label}</span>
+              ))}
+            </div>
+            <p className="mt-2 text-[9px] text-white/30">Live edits last for this match. Use the Tactics page to save them permanently.</p>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-white/10 bg-card p-3">
+            <div className="flex items-center justify-between"><span className="stat-label">Substitution</span><span className="text-[9px] text-white/30">up to 5</span></div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <select value={pendingSub.off} onChange={(e) => onPendingSub((v) => ({ ...v, off: Number(e.target.value), dirty: true }))} className="rounded-lg border border-white/10 bg-navy px-2 py-2 text-[10px]">
+                {currentLineup.map((p, i) => <option key={p.playerId} value={i}>Off · #{p.shirtNumber} {p.name} ({p.rating})</option>)}
+              </select>
+              <select value={selectedBenchIdx} onChange={(e) => onPendingSub((v) => ({ ...v, on: Number(e.target.value), dirty: true }))} className="rounded-lg border border-white/10 bg-navy px-2 py-2 text-[10px]">
+                {availableBench.map(({ p, i }) => <option key={p.id} value={i}>On · #{p.shirtNumber} {p.lastName}</option>)}
+              </select>
+            </div>
+            <button onClick={() => onSub(pendingSub.off, selectedBenchIdx)} disabled={!availableBench.length || !currentLineup.length}
+              className="mt-2 w-full rounded-lg border border-white/10 py-2 text-[10px] font-bold text-white/70 disabled:opacity-30">
+              {atHalfTime ? "Make substitution now" : "Make substitution"}
+            </button>
+          </div>
+        </div>
+
+        <footer className="flex shrink-0 gap-2 border-t border-white/10 bg-panel p-3">
+          <button onClick={onClose} className="btn-dark flex-1 py-2 text-xs">Cancel</button>
+          <button onClick={onApply} className="btn-gold flex flex-1 items-center justify-center gap-2 py-2 text-xs">
+            <Check size={15} /> Apply &amp; {atHalfTime ? "Return" : "Resume"}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function MatchToggle({ label, on, onChange }: { label: string; on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button type="button" onClick={() => onChange(!on)} className={`rounded-lg border p-2 text-left transition ${on ? "border-gold/50 bg-gold/10 text-gold" : "border-white/10 bg-card text-white/45"}`}>
+      <span className="block text-[9px] uppercase tracking-wide">{label}</span>
+      <span className="mt-1 block text-[10px] font-bold">{on ? "ON" : "OFF"}</span>
+    </button>
+  );
+}
+
+function prettyPlayStyle(style: PlayStyle): string {
+  return style.replace(/([a-z])([A-Z])/g, "$1 $2").replace(" Style", "");
 }
 
 function poisson(lambda: number, rng: SeededRNG): number {

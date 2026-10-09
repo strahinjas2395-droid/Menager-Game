@@ -1,19 +1,42 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Save } from "lucide-react";
+import { Save, Sparkles } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import TopBar from "@/components/TopBar";
 import StepDots from "@/components/StepDots";
 import { useGameStore } from "@/store/gameStore";
 import { selectBestXI } from "@/engine/matchSimulator";
 import { FORMATION_NAMES } from "@/engine/formations";
+import { parseInstructions, summarizeDirectives } from "@/engine/directives";
 import {
   DefensiveLine, MentalityLevel, PlayStyle, PressingIntensity, TempoSetting,
   TimeWasting, WidthSetting, type Player, type TacticalSetup,
 } from "@/types";
 
 const PLAY_STYLES = Object.values(PlayStyle);
+
+const STYLE_HELP: Record<PlayStyle, string> = {
+  [PlayStyle.PossessionBased]: "Patient build-up, safe support angles, circulation and rest defence.",
+  [PlayStyle.TikiTaka]: "Compact triangles, short combinations, third-man runs and aggressive recycling.",
+  [PlayStyle.DirectCounterAttack]: "Defend compactly, then attack space vertically as soon as possession turns.",
+  [PlayStyle.GegenpressingStyle]: "High line, intense counter-press and fast combinations after regains.",
+  [PlayStyle.LongBallDirect]: "Bypass midfield, find strong forwards and attack aerial second balls.",
+  [PlayStyle.WingPlay]: "Stretch both flanks, overlap and deliver crosses or byline cutbacks.",
+  [PlayStyle.ParkTheBus]: "Deep narrow block, conserve shape and release selective counterattacks.",
+  [PlayStyle.TotalFootball]: "Fluid rotations, roaming midfielders and position interchanges.",
+  [PlayStyle.RouteOne]: "Early vertical service toward a target forward with runners collecting knockdowns.",
+  [PlayStyle.Balanced]: "A mixed approach that adapts risk, width and progression to the situation.",
+};
+
+const INSTRUCTION_EXAMPLES = [
+  "Hold your position and keep passes short",
+  "Make runs in behind and shoot from distance",
+  "Stay wide, take on defenders and whip early crosses",
+  "Cut inside, roam freely and play through balls",
+  "Act as a target man, hold up the ball and lay it off",
+  "Press aggressively and mark tightly",
+];
 
 type NumKey =
   | "tempo" | "passingLength" | "defensiveLine" | "pressing" | "width" | "mentality";
@@ -38,7 +61,11 @@ const PRESS_REACH = [0, 45, 95, 160, 235]; // visual press-zone depth per level
 export default function TacticsPage() {
   const save = useGameStore((s) => s.save);
   const updateTactics = useGameStore((s) => s.updateTactics);
+  const updatePlayerInstructions = useGameStore((s) => s.updatePlayerInstructions);
   const [draft, setDraft] = useState<TacticalSetup | null>(null);
+  const [instructionDraft, setInstructionDraft] = useState<Record<string, string>>({});
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+  const instructionsLoaded = useRef(false);
   const [saved, setSaved] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const pitchRef = useRef<HTMLDivElement>(null);
@@ -70,6 +97,13 @@ export default function TacticsPage() {
     if (!club) return [];
     return club.playerIds.map((id) => save.world.players[id]).filter((p): p is Player => !!p);
   }, [save]);
+
+  useEffect(() => {
+    if (!squad.length || instructionsLoaded.current) return;
+    setInstructionDraft(Object.fromEntries(squad.map((p) => [p.id, p.individualInstructions ?? ""])));
+    setSelectedPlayerId(squad.find((p) => p.primaryPosition !== "GK")?.id ?? squad[0]?.id ?? null);
+    instructionsLoaded.current = true;
+  }, [squad]);
 
   const xi = useMemo(
     () => (draft && squad.length ? selectBestXI(squad, draft.formation) : null),
@@ -118,6 +152,7 @@ export default function TacticsPage() {
 
   const onPointerDown = (i: number) => (e: React.PointerEvent) => {
     dragIdx.current = i;
+    setSelectedPlayerId(xi.starters[i]?.id ?? null);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     e.preventDefault();
   };
@@ -137,12 +172,16 @@ export default function TacticsPage() {
 
   const saveTactics = async () => {
     await updateTactics(draft);
+    await updatePlayerInstructions(instructionDraft);
     setSaved(true);
     setTimeout(() => setSaved(false), 1800);
   };
 
   const pressFrom = 240 + lineShift;
   const pressTo = pressFrom + PRESS_REACH[Number(draft.pressing)];
+  const selectedPlayer = squad.find((p) => p.id === selectedPlayerId) ?? squad[0];
+  const selectedText = selectedPlayer ? instructionDraft[selectedPlayer.id] ?? "" : "";
+  const understood = summarizeDirectives(parseInstructions(selectedText));
 
   return (
     <main className="flex h-full flex-col bg-navy">
@@ -201,7 +240,7 @@ export default function TacticsPage() {
                   <div
                     key={p.id}
                     onPointerDown={onPointerDown(i)}
-                    className="absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-grab select-none active:cursor-grabbing"
+                    className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-grab select-none rounded-full active:cursor-grabbing ${selectedPlayerId === p.id ? "ring-2 ring-gold/80 ring-offset-2 ring-offset-transparent" : ""}`}
                     style={{ left: `${pos.x / 10}%`, top: `${(pos.y / 650) * 100}%` }}
                     title={`${p.firstName} ${p.lastName} — drag to fix position`}
                   >
@@ -262,10 +301,13 @@ export default function TacticsPage() {
                       : "border border-white/10 bg-navy text-white/60"
                   }`}
                 >
-                  {s}
+                  {prettyStyle(s)}
                 </button>
               ))}
             </div>
+            <p className="mt-2 rounded-lg bg-navy/70 px-3 py-2 text-[11px] leading-relaxed text-white/55">
+              {STYLE_HELP[draft.playStyle]}
+            </p>
           </section>
 
           {/* Team instructions — dot sliders */}
@@ -322,6 +364,71 @@ export default function TacticsPage() {
             </div>
           </section>
 
+          {/* Individual instructions */}
+          <section className="card-panel mt-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <span className="stat-label">Individual Instructions</span>
+                <p className="mt-1 text-[10px] leading-relaxed text-white/40">
+                  Write naturally. The tactical interpreter converts your note into decisions, movement and defensive behaviour.
+                </p>
+              </div>
+              <Sparkles size={18} className="shrink-0 text-gold" />
+            </div>
+
+            <select
+              value={selectedPlayer?.id ?? ""}
+              onChange={(e) => setSelectedPlayerId(e.target.value)}
+              className="mt-3 w-full rounded-lg border border-white/10 bg-navy px-3 py-2 text-xs font-semibold outline-none focus:border-gold"
+            >
+              {xi.starters.map((p, i) => (
+                <option key={p.id} value={p.id}>XI · {xi.roles[i]} · #{p.shirtNumber} {p.firstName} {p.lastName}</option>
+              ))}
+              {xi.bench.map((p) => (
+                <option key={p.id} value={p.id}>Bench · {p.primaryPosition} · #{p.shirtNumber} {p.firstName} {p.lastName}</option>
+              ))}
+              {squad.filter((p) => !xi.starters.includes(p) && !xi.bench.includes(p)).map((p) => (
+                <option key={p.id} value={p.id}>Squad · {p.primaryPosition} · #{p.shirtNumber} {p.lastName}</option>
+              ))}
+            </select>
+
+            <textarea
+              value={selectedText}
+              onChange={(e) => selectedPlayer && setInstructionDraft((d) => ({ ...d, [selectedPlayer.id]: e.target.value }))}
+              placeholder="Example: Stay wide, take on defenders and whip early crosses. Press their full-back hard."
+              rows={3}
+              maxLength={300}
+              className="mt-2 w-full resize-none rounded-xl border border-white/10 bg-navy p-3 text-xs leading-relaxed text-white outline-none placeholder:text-white/25 focus:border-gold"
+            />
+            <div className="mt-1 text-right text-[9px] text-white/30">{selectedText.length}/300</div>
+
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {understood.length ? understood.map((label) => (
+                <span key={label} className="rounded-full border border-gold/30 bg-gold/10 px-2 py-1 text-[9px] font-semibold text-gold">
+                  {label}
+                </span>
+              )) : (
+                <span className="text-[10px] text-white/35">No instruction — follows the team system.</span>
+              )}
+            </div>
+
+            <details className="mt-3">
+              <summary className="cursor-pointer text-[10px] font-semibold text-white/45">Example phrases</summary>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {INSTRUCTION_EXAMPLES.map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    onClick={() => selectedPlayer && setInstructionDraft((d) => ({ ...d, [selectedPlayer.id]: example }))}
+                    className="rounded-lg border border-white/10 bg-navy px-2 py-1.5 text-left text-[9px] text-white/55 hover:border-gold/40 hover:text-white"
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </details>
+          </section>
+
           {/* Set pieces */}
           <section className="card-panel mt-3">
             <span className="stat-label">Set Pieces & Leadership</span>
@@ -350,6 +457,10 @@ export default function TacticsPage() {
       <BottomNav />
     </main>
   );
+}
+
+function prettyStyle(style: PlayStyle): string {
+  return style.replace(/([a-z])([A-Z])/g, "$1 $2").replace("Style", "");
 }
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {

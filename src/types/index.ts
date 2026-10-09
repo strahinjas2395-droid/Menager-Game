@@ -175,6 +175,8 @@ export interface PlayerContract {
 export interface Player {
   // Identity
   id: string;
+  /** Free-text individual instructions from the manager; parsed by engine/directives.ts */
+  individualInstructions?: string;
   firstName: string;
   lastName: string;
   nationality: string;

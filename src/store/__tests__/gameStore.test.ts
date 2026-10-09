@@ -73,6 +73,19 @@ describe("core game loop (integration)", () => {
     );
     delete save!.tacticalSetup.positionOverrides[starterId];
 
+    // free-text individual instructions persist and reach the match engine as directives
+    await store().updatePlayerInstructions({
+      [starterId]: "Hold your position, keep passes short and press aggressively",
+    });
+    expect(store().save!.world.players[starterId].individualInstructions).toContain("keep passes short");
+    ctx = getMatchContext(store().save!, week1UserFixture.id)!;
+    const instructedSide = week1UserFixture.homeClubId === clubId ? ctx.home : ctx.away;
+    expect(instructedSide.directives?.[starterId]).toMatchObject({
+      holdPosition: true,
+      shortPassing: true,
+      pressHard: true,
+    });
+
     const buildResult = (fixtureId: string): MatchResult => {
       const s = store().save!;
       const fixture = s.world.fixtures[fixtureId];

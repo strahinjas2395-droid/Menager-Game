@@ -50,6 +50,8 @@ export interface PenaltyResult {
  * base 70% + ShortPassing*2 + Technique*1 - distance*0.3
  * - pressure*15 - nearest opponent Interceptions*1
  */
+export type PassTechnique = "short" | "long" | "through" | "cross";
+
 export function resolvePass(
   passer: Player,
   receiver: Player,
@@ -57,14 +59,21 @@ export function resolvePass(
   pressure: number,
   opponentInterceptions: number,
   rng: SeededRNG,
+  technique: PassTechnique = "short",
 ): PassResult {
+  const execution =
+    technique === "cross"
+      ? passer.crossing * 1.7 + passer.technique * 0.8
+      : technique === "through"
+        ? passer.creativity * 0.75 + passer.decisions * 0.65 + passer.shortPassing * 0.75 + passer.technique * 0.6
+        : technique === "long"
+          ? passer.longPassing * 1.65 + passer.technique * 0.8
+          : passer.shortPassing * 2 + passer.technique;
+  const receiverRead = (receiver.anticipation + receiver.offTheBall) * 0.14;
+  const difficulty = technique === "through" ? 8 : technique === "cross" ? 5 : technique === "long" ? 3 : 0;
   const base =
-    70 +
-    passer.shortPassing * 2 +
-    passer.technique * 1 -
-    distance * 0.3 -
-    pressure * 15 -
-    opponentInterceptions * 1;
+    70 + execution + receiverRead - difficulty - distance * (technique === "short" ? 0.3 : 0.2) -
+    pressure * 15 - opponentInterceptions;
   const p = clamp(base, 5, 97);
   const success = rng.chance(p / 100);
   const intercepted = !success && rng.chance(0.6);
@@ -155,8 +164,14 @@ export function resolveHeader(
   danger: number,
   rng: SeededRNG,
 ): HeaderResult {
-  const att = attacker.heading * 2 + attacker.jumping * 1.5 + attacker.offTheBall;
-  const def = defender.aerialDuels * 2 + defender.positioning * 1.5 + defender.marking;
+  const att =
+    attacker.heading * 2 + attacker.jumping * 1.5 + attacker.offTheBall +
+    (attacker.strength ?? 10) * 0.35 + (attacker.bravery ?? 10) * 0.25 +
+    clamp(((attacker.height ?? 180) - 175) / 4, -2, 5);
+  const def =
+    defender.aerialDuels * 2 + defender.positioning * 1.5 + defender.marking +
+    (defender.strength ?? 10) * 0.4 + (defender.bravery ?? 10) * 0.25 +
+    clamp(((defender.height ?? 180) - 175) / 4, -2, 5);
   const pWin = clamp(50 + (att - def) * 1.3, 15, 85);
 
   if (!rng.chance(pWin / 100)) {
@@ -192,4 +207,46 @@ export function resolvePenalty(
   );
   const goal = rng.chance(p / 100);
   return { goal, saved: !goal };
+}
+
+/**
+ * Race for a loose ball — pace, acceleration, awareness (anticipation) and
+ * strength decide who gets there first, plus a dash of uncertainty.
+ */
+export function resolveLooseBallDuel(
+  a: Player,
+  b: Player,
+  rng: SeededRNG,
+): "a" | "b" {
+  const score = (p: Player) =>
+    p.pace * 0.4 + p.acceleration * 0.2 + p.anticipation * 0.3 + p.strength * 0.1;
+  const sa = score(a) + rng.float(0, 7);
+  const sb = score(b) + rng.float(0, 7);
+  return sa >= sb ? "a" : "b";
+}
+
+/**
+ * Can the ball carrier brush the challenge aside? Strength, balance and ball
+ * control vs the defender's strength, aggression and tackling.
+ */
+/** Aerial/shoulder duel for a dropping pass, independent from shooting. */
+export function resolveAerialDuel(
+  a: Player,
+  b: Player,
+  rng: SeededRNG,
+): "a" | "b" {
+  const aerial = (p: Player) =>
+    p.jumping * 0.28 + p.heading * 0.18 + p.aerialDuels * 0.22 +
+    p.strength * 0.12 + p.bravery * 0.1 + clamp((p.height - 170) / 5, -2, 5);
+  return aerial(a) + rng.float(0, 5) >= aerial(b) + rng.float(0, 5) ? "a" : "b";
+}
+
+export function resolveHoldOff(
+  attacker: Player,
+  defender: Player,
+  rng: SeededRNG,
+): boolean {
+  const atk = attacker.strength * 0.5 + attacker.balance * 0.3 + attacker.ballControl * 0.2;
+  const def = defender.strength * 0.5 + defender.aggression * 0.25 + defender.tackling * 0.25;
+  return rng.chance(clamp(0.5 + (atk - def) * 0.045, 0.18, 0.85));
 }

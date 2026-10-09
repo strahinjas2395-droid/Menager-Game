@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveAerialDuel,
   resolveDribble,
   resolveHeader,
+  resolveHoldOff,
+  resolveLooseBallDuel,
   resolvePass,
   resolvePenalty,
   resolveShot,
@@ -154,4 +157,41 @@ describe("actionResolver", () => {
     expect(strongWins / N).toBeGreaterThan(weakWins / N);
     expect(strongWins / N).toBeGreaterThan(0.55);
   });
+
+  it("physical loose-ball races reward acceleration and anticipation", () => {
+    const rng = new SeededRNG(71);
+    const sharp = P({ pace: 18, acceleration: 18, anticipation: 18, strength: 12 });
+    const slow = P({ pace: 5, acceleration: 5, anticipation: 5, strength: 12 });
+    let sharpWins = 0;
+    const N = 2000;
+    for (let i = 0; i < N; i++) {
+      if (resolveLooseBallDuel(sharp, slow, rng) === "a") sharpWins++;
+    }
+    expect(sharpWins / N).toBeGreaterThan(0.9);
+  });
+
+  it("strength and balance make shielding materially effective", () => {
+    const strongRng = new SeededRNG(81);
+    const weakRng = new SeededRNG(81);
+    const defender = P({ strength: 13, aggression: 13, tackling: 13 });
+    let strongHolds = 0;
+    let weakHolds = 0;
+    const N = 2500;
+    for (let i = 0; i < N; i++) {
+      if (resolveHoldOff(P({ strength: 19, balance: 18, ballControl: 16 }), defender, strongRng)) strongHolds++;
+      if (resolveHoldOff(P({ strength: 4, balance: 5, ballControl: 8 }), defender, weakRng)) weakHolds++;
+    }
+    expect(strongHolds / N).toBeGreaterThan(weakHolds / N + 0.35);
+  });
+
+  it("height, jumping and aerial-duel skill decide dropping balls", () => {
+    const rng = new SeededRNG(91);
+    const dominant = P({ height: 195, jumping: 18, heading: 17, aerialDuels: 18, strength: 17, bravery: 16 });
+    const small = P({ height: 168, jumping: 6, heading: 7, aerialDuels: 6, strength: 7, bravery: 8 });
+    let wins = 0;
+    const N = 2000;
+    for (let i = 0; i < N; i++) if (resolveAerialDuel(dominant, small, rng) === "a") wins++;
+    expect(wins / N).toBeGreaterThan(0.92);
+  });
+
 });

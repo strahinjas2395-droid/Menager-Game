@@ -209,4 +209,36 @@ describe("MatchSimulator", () => {
     const benchIds = sim.home.bench.map((p: Player) => p.id);
     expect(after).toContain(benchIds[0]);
   });
+
+  it("play styles produce materially different passing behaviour", () => {
+    const tiki = setup(212);
+    tiki.home.tactics.playStyle = PlayStyle.TikiTaka;
+    playFullMatch(tiki.sim);
+
+    const route = setup(212);
+    route.home.tactics.playStyle = PlayStyle.RouteOne;
+    playFullMatch(route.sim);
+
+    const tikiStats = tiki.sim.getStats();
+    const routeStats = route.sim.getStats();
+    expect(tikiStats.passesAttemptedHome).toBeGreaterThan(routeStats.passesAttemptedHome * 1.5);
+    expect(tikiStats.passesCompletedHome / tikiStats.passesAttemptedHome)
+      .toBeGreaterThan(routeStats.passesCompletedHome / routeStats.passesAttemptedHome);
+  });
+
+  it("applies formation and instruction changes during a live match", () => {
+    const { sim, home } = setup(313);
+    sim.tick(0.5);
+    const beforeTime = sim.getState().gameTime;
+    const changed = { ...home.tactics, formation: "4-4-2", pressing: PressingIntensity.Extreme };
+    sim.updateTactics("home", changed);
+    sim.updateDirectives("home", {
+      [home.starters[9].id]: { targetMan: true, holdPosition: true },
+    });
+    expect(sim.home.tactics.formation).toBe("4-4-2");
+    expect(sim.home.tactics.pressing).toBe(PressingIntensity.Extreme);
+    expect(sim.home.roles.filter((r) => r === "ST")).toHaveLength(2);
+    expect(sim.getState().gameTime).toBe(beforeTime); // tactical UI does not restart the match
+  });
+
 });

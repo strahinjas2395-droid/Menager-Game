@@ -30,6 +30,7 @@ import { generateAllLeagues, hashStr } from "@/database/leagueGenerator";
 import { generateSeasonFixtures, TOTAL_WEEKS, simulateWeekAI, userFixturesForWeek, fixturesForWeek, advanceCup, advanceContinental, applyPromotionRelegation, processSeasonEnd, transferWindowOpen } from "@/engine/seasonManager";
 import { calculateStandings } from "@/engine/leagueEngine";
 import { buildTeamSide, type TeamSide } from "@/engine/matchSimulator";
+import { parseSquadInstructions } from "@/engine/directives";
 import { saveGame, loadGame, deleteSave } from "@/database/storage";
 import { aiTransferActivity } from "@/engine/transferEngine";
 import { CONTINENTAL_ID } from "@/engine/continentalEngine";
@@ -147,6 +148,7 @@ interface GameState {
   advanceWeek: () => AdvanceResult;
   recordUserMatch: (result: MatchResult) => AdvanceResult;
   updateTactics: (t: TacticalSetup) => Promise<void>;
+  updatePlayerInstructions: (instructions: Record<string, string>) => Promise<void>;
   markAllInboxRead: () => void;
   addMessage: (subject: string, body: string) => void;
   saveNow: () => Promise<void>;
@@ -443,6 +445,21 @@ export const useGameStore = create<GameState>((set, get) => {
       await persist();
     },
 
+    updatePlayerInstructions: async (instructions) => {
+      commit((save) => {
+        const club = save.world.clubs[save.userClubId];
+        if (!club) return;
+        for (const playerId of club.playerIds) {
+          const p = save.world.players[playerId];
+          if (!p || !(playerId in instructions)) continue;
+          const text = instructions[playerId].trim();
+          if (text) p.individualInstructions = text;
+          else delete p.individualInstructions;
+        }
+      });
+      await persist();
+    },
+
     markAllInboxRead: () => {
       commit((save) => {
         for (const m of save.inbox) m.read = true;
@@ -533,6 +550,7 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
       squad,
       tactics,
       isUserTeam: isUser,
+      directives: isUser ? parseSquadInstructions(squad) : undefined,
     });
     // apply user's dragged pitch positions (drawn in home orientation)
     const overrides = tactics.positionOverrides;
