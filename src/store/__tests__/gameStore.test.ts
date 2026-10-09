@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { useGameStore } from "@/store/gameStore";
+import { getMatchContext, useGameStore } from "@/store/gameStore";
 import { LEAGUES_DATA, slugify } from "@/database/leagueGenerator";
 import { Difficulty, type MatchResult, type MatchStats } from "@/types";
 
@@ -52,6 +52,26 @@ describe("core game loop (integration)", () => {
     expect(save!.season.transferWindowOpen).toBe(true);
     expect(save!.inbox.length).toBeGreaterThanOrEqual(1);
     expect(save!.tacticalSetup.formation).toBeTruthy();
+
+    // dragged position overrides flow into the match context (mirrored for away)
+    const week1UserFixture = Object.values(save!.world.fixtures).find(
+      (f) =>
+        f.week === 1 &&
+        (f.homeClubId === clubId || f.awayClubId === clubId),
+    )!;
+    let ctx = getMatchContext(save!, week1UserFixture.id)!;
+    const userSide = week1UserFixture.homeClubId === clubId ? ctx.home : ctx.away;
+    const starterId = userSide.starters[0].id;
+    const starterIdx = userSide.starters.findIndex((p) => p.id === starterId);
+    save!.tacticalSetup.positionOverrides[starterId] = { x: 333, y: 222 };
+    ctx = getMatchContext(save!, week1UserFixture.id)!;
+    const userSide2 = week1UserFixture.homeClubId === clubId ? ctx.home : ctx.away;
+    expect(userSide2.basePositions[starterIdx]).toEqual(
+      week1UserFixture.homeClubId === clubId
+        ? { x: 333, y: 222 }
+        : { x: 667, y: 222 },
+    );
+    delete save!.tacticalSetup.positionOverrides[starterId];
 
     const buildResult = (fixtureId: string): MatchResult => {
       const s = store().save!;

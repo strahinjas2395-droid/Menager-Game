@@ -83,13 +83,30 @@ export default function HubPage() {
 
   const cupStatus = () => {
     if (save.cup.championId === save.userClubId) return "🏆 Champions!";
-    if (save.cup.championId) return "Eliminated";
-    const stillIn = Object.values(save.world.fixtures).some(
+    const mine = Object.values(save.world.fixtures).filter(
       (f) =>
         f.competitionId === CUP_ID &&
         (f.homeClubId === save.userClubId || f.awayClubId === save.userClubId),
     );
-    if (!stillIn && save.cup.round > 1) return "Eliminated";
+    const last = mine
+      .filter((f) => f.played)
+      .sort((a, b) => a.week - b.week)
+      .pop();
+    if (last) {
+      const userIsHome = last.homeClubId === save.userClubId;
+      const gf = userIsHome ? last.homeGoals : last.awayGoals;
+      const ga = userIsHome ? last.awayGoals : last.homeGoals;
+      const pensFor = (userIsHome ? last.homePens : last.awayPens) ?? null;
+      const pensAgainst = (userIsHome ? last.awayPens : last.homePens) ?? null;
+      const won =
+        gf !== ga
+          ? gf > ga
+          : pensFor !== null && pensAgainst !== null
+            ? pensFor > pensAgainst
+            : true; // draw not yet resolved (shouldn't happen)
+      if (!won && !save.cup.championId) return "Eliminated";
+    }
+    if (save.cup.championId) return "Eliminated";
     return CUP_ROUND_NAMES[save.cup.round] ?? "—";
   };
 

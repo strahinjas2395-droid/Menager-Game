@@ -185,6 +185,7 @@ export default function MatchCanvas({
     inited.current = true;
 
     let destroyed = false;
+    let game: import("phaser").Game | null = null;
 
     import("phaser").then((Phaser) => {
       if (destroyed || !containerRef.current) return;
@@ -204,7 +205,7 @@ export default function MatchCanvas({
         }
       }
 
-      const game = new Phaser.Game({
+      game = new Phaser.Game({
         type: Phaser.AUTO,
         parent: containerRef.current,
         width: PITCH_W,
@@ -219,13 +220,19 @@ export default function MatchCanvas({
         render: { antialias: true },
         scene: [Scene],
       });
-      void game;
     });
 
     return () => {
       destroyed = true;
-      sceneRef.current?.destroy();
-      sceneRef.current = null;
+      if (sceneRef.current) {
+        // scene booted: MatchScene.destroy kills the Phaser.Game
+        sceneRef.current.destroy();
+        sceneRef.current = null;
+      } else if (game) {
+        // unmounted before the scene booted — kill the orphan game directly
+        game.destroy(true);
+      }
+      game = null;
       inited.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

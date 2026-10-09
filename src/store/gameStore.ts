@@ -523,7 +523,7 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
             tacticalFlexibility: 8,
           },
         );
-    return buildTeamSide({
+    const side = buildTeamSide({
       clubId,
       name: club.name,
       shortName: club.shortName,
@@ -534,6 +534,17 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
       tactics,
       isUserTeam: isUser,
     });
+    // apply user's dragged pitch positions (drawn in home orientation)
+    const overrides = tactics.positionOverrides;
+    if (isUser && Object.keys(overrides).length > 0) {
+      side.basePositions = side.basePositions.map((pos, i) => {
+        const pid = side.starters[i]?.id;
+        const o = pid ? overrides[pid] : undefined;
+        if (!o) return pos;
+        return isHome ? { x: o.x, y: o.y } : { x: 1000 - o.x, y: o.y };
+      });
+    }
+    return side;
   };
 
   const competitionLabel =
