@@ -45,7 +45,11 @@ function MatchScreen() {
   const [halfTime, setHalfTime] = useState(false);
   const [fullTime, setFullTime] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [speed, setSpeed] = useState<1 | 2 | 4 | 8>(4);
+  const [speed, setSpeed] = useState<1 | 2 | 4 | 8>(
+    (save?.settings.defaultMatchSpeed as 1 | 2 | 4 | 8) ?? 4,
+  );
+  const speedRef = useRef<1 | 2 | 4 | 8>(speed);
+  speedRef.current = speed;
   const [events, setEvents] = useState<MatchEvent[]>([]);
   const [pendingSub, setPendingSub] = useState<{ off: number; on: number; dirty: boolean }>({ off: 0, on: 0, dirty: false });
   // knockout drama
@@ -82,9 +86,12 @@ function MatchScreen() {
         }
         case "event": {
           if (msg.event.type === "Goal") {
-            try {
-              navigator.vibrate?.(200);
-            } catch { /* noop */ }
+            const vib = useGameStore.getState().save?.settings.vibration;
+            if (vib !== false) {
+              try {
+                navigator.vibrate?.(200);
+              } catch { /* noop */ }
+            }
           }
           break;
         }
@@ -107,6 +114,8 @@ function MatchScreen() {
       },
     });
     workerRef.current = worker;
+    // match UI highlight: sim defaults to 1x — push the selected speed immediately
+    worker.postMessage({ type: "speed", value: speedRef.current });
 
     return () => {
       cancelled = true;
