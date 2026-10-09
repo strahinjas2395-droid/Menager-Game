@@ -2,14 +2,16 @@
 
 /**
  * MatchCanvas — Phaser 3 pitch renderer embedded in React.
- * Draws the pitch (Session 13) plus player/ball dots with 100ms tweens
- * (Session 14). The scene instance is exposed through `sceneRef`.
+ * Renders at 2× resolution (2000×1300 backing store) so lines and dots stay
+ * crisp when the canvas is scaled down to the viewport.
  */
 import { useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
 
 const PITCH_W = 1000;
 const PITCH_H = 650;
+/** render scale: all drawing happens at R× the logical pitch size */
+const R = 2;
 
 export class MatchScene {
   private scene: import("phaser").Scene | null = null;
@@ -18,7 +20,11 @@ export class MatchScene {
   private ball: import("phaser").GameObjects.Arc | null = null;
   private gameRef: import("phaser").Game | null = null;
 
-  create(scene: import("phaser").Scene, colors: { home: string; away: string }, numbers: { home: number[]; away: number[] }): void {
+  create(
+    scene: import("phaser").Scene,
+    colors: { home: string; away: string },
+    numbers: { home: number[]; away: number[] },
+  ): void {
     this.scene = scene;
     this.gameRef = scene.game;
     this.drawPitch(scene);
@@ -26,8 +32,10 @@ export class MatchScene {
     this.homeDots = numbers.home.map((n, i) => this.makeDot(scene, colors.home, n, true, i));
     this.awayDots = numbers.away.map((n, i) => this.makeDot(scene, colors.away, n, false, i));
 
-    this.ball = scene.add.circle(PITCH_W / 2, PITCH_H / 2, 4, 0xffffff).setDepth(10);
-    this.ball.setStrokeStyle(1, 0x333333);
+    this.ball = scene.add
+      .circle((PITCH_W / 2) * R, (PITCH_H / 2) * R, 11, 0xffffff)
+      .setDepth(10);
+    this.ball.setStrokeStyle(3, 0x222222, 0.9);
   }
 
   private makeDot(
@@ -39,80 +47,102 @@ export class MatchScene {
   ): import("phaser").GameObjects.Container {
     const g = scene.add.graphics();
     const hex = parseInt(color.replace("#", ""), 16);
+    const rad = 19;
     if (filled) {
-      g.fillStyle(hex, 1);
-      g.fillCircle(0, 0, 8);
-      g.lineStyle(2, 0xffffff, 0.9);
-      g.strokeCircle(0, 0, 8);
-    } else {
+      // soft drop shadow
       g.fillStyle(0x000000, 0.35);
-      g.fillCircle(0, 0, 8);
-      g.lineStyle(3, hex, 1);
-      g.strokeCircle(0, 0, 8);
+      g.fillCircle(3, 4, rad);
+      g.fillStyle(hex, 1);
+      g.fillCircle(0, 0, rad);
+      g.lineStyle(4, 0xffffff, 0.95);
+      g.strokeCircle(0, 0, rad);
+    } else {
+      g.fillStyle(0x101828, 0.9);
+      g.fillCircle(0, 0, rad);
+      g.lineStyle(5, hex, 1);
+      g.strokeCircle(0, 0, rad);
+      g.lineStyle(2, 0xffffff, 0.5);
+      g.strokeCircle(0, 0, rad - 4);
     }
-    const label = scene.add.text(0, 0, String(number), {
-      fontFamily: "Arial, sans-serif",
-      fontSize: "9px",
-      color: filled ? "#ffffff" : color,
+    const label = scene.add.text(0, filled ? -1 : 0, String(number), {
+      fontFamily: "Arial, Helvetica, sans-serif",
+      fontSize: "20px",
+      color: "#ffffff",
       fontStyle: "bold",
+      stroke: filled ? "#000000" : color,
+      strokeThickness: filled ? 3 : 4,
     });
     label.setOrigin(0.5);
-    const c = scene.add.container(PITCH_W / 2, PITCH_H / 2, [g, label]);
+    const c = scene.add.container((PITCH_W / 2) * R, (PITCH_H / 2) * R, [g, label]);
     c.setDepth(5 + index * 0.01);
     return c;
   }
 
   private drawPitch(scene: import("phaser").Scene): void {
     const g = scene.add.graphics();
+    const W = PITCH_W * R;
+    const H = PITCH_H * R;
+    const s = (n: number) => n * R; // logical → render units
 
-    // grass with mowing stripes
+    // grass with subtle mowing stripes
     g.fillStyle(0x2e7d32, 1);
-    g.fillRect(0, 0, PITCH_W, PITCH_H);
-    g.fillStyle(0x358838, 1);
+    g.fillRect(0, 0, W, H);
+    g.fillStyle(0x327f35, 1);
     for (let i = 0; i < 10; i += 2) {
-      g.fillRect((i * PITCH_W) / 10, 0, PITCH_W / 10, PITCH_H);
+      g.fillRect((i * W) / 10, 0, W / 10, H);
     }
 
     const line = 0xffffff;
-    g.lineStyle(3, line, 0.6);
+    g.lineStyle(6, line, 0.9);
 
     // outline
-    g.strokeRect(0, 0, PITCH_W, PITCH_H);
+    g.strokeRect(3, 3, W - 6, H - 6);
     // halfway line + centre circle
-    g.lineBetween(PITCH_W / 2, 0, PITCH_W / 2, PITCH_H);
-    g.strokeCircle(PITCH_W / 2, PITCH_H / 2, 91.5);
-    g.fillStyle(line, 0.6);
-    g.fillCircle(PITCH_W / 2, PITCH_H / 2, 4);
+    g.lineBetween(s(500), 3, s(500), H - 3);
+    g.beginPath();
+    g.arc(s(500), s(325), s(91.5), 0, Math.PI * 2, false);
+    g.strokePath();
+    g.fillStyle(line, 0.95);
+    g.fillCircle(s(500), s(325), 5);
 
     // penalty boxes (165 deep, ±201), goal areas (55 deep, ±91)
-    const boxY1 = PITCH_H / 2 - 201;
-    const boxY2 = PITCH_H / 2 + 201;
-    const gaY1 = PITCH_H / 2 - 91;
-    const gaY2 = PITCH_H / 2 + 91;
-    // left
-    g.strokeRect(0, boxY1, 165, 402);
-    g.strokeRect(0, gaY1, 55, 182);
-    g.fillCircle(110, PITCH_H / 2, 4);
-    g.arc(0, PITCH_H / 2, 91.5, -0.93, 0.93, false).strokePath();
-    // right
-    g.strokeRect(PITCH_W - 165, boxY1, 165, 402);
-    g.strokeRect(PITCH_W - 55, gaY1, 55, 182);
-    g.fillCircle(PITCH_W - 110, PITCH_H / 2, 4);
-    g.arc(PITCH_W, PITCH_H / 2, 91.5, Math.PI - 0.93, Math.PI + 0.93, false).strokePath();
+    const boxY1 = s(325 - 201);
+    const boxH = s(402);
+    const gaY1 = s(325 - 91);
+    const gaH = s(182);
+    // left box
+    g.strokeRect(3, boxY1, s(165), boxH);
+    g.strokeRect(3, gaY1, s(55), gaH);
+    g.fillCircle(s(110), s(325), 5);
+    g.beginPath();
+    g.arc(3, s(325), s(91.5), -0.93, 0.93, false);
+    g.strokePath();
+    // right box
+    g.strokeRect(W - s(165) - 3, boxY1, s(165), boxH);
+    g.strokeRect(W - s(55) - 3, gaY1, s(55), gaH);
+    g.fillCircle(W - s(110), s(325), 5);
+    g.beginPath();
+    g.arc(W - 3, s(325), s(91.5), Math.PI - 0.93, Math.PI + 0.93, false);
+    g.strokePath();
 
-    // corner arcs
-    g.arc(0, 0, 12, 0, Math.PI / 2, false).strokePath();
-    g.arc(PITCH_W, 0, 12, Math.PI / 2, Math.PI, false).strokePath();
-    g.arc(0, PITCH_H, 12, -Math.PI / 2, 0, false).strokePath();
-    g.arc(PITCH_W, PITCH_H, 12, Math.PI, Math.PI * 1.5, false).strokePath();
+    // corner arcs — each in its own path so strokes never accumulate
+    const corner = (x: number, y: number, a0: number, a1: number) => {
+      g.beginPath();
+      g.arc(x, y, s(12), a0, a1, false);
+      g.strokePath();
+    };
+    corner(3, 3, 0, Math.PI / 2);
+    corner(W - 3, 3, Math.PI / 2, Math.PI);
+    corner(3, H - 3, -Math.PI / 2, 0);
+    corner(W - 3, H - 3, Math.PI, Math.PI * 1.5);
 
     // goals (73 wide, 24 deep)
-    g.fillStyle(0xffffff, 0.25);
-    g.fillRect(-24, PITCH_H / 2 - 37, 24, 74);
-    g.fillRect(PITCH_W, PITCH_H / 2 - 37, 24, 74);
-    g.lineStyle(3, line, 0.85);
-    g.strokeRect(-24, PITCH_H / 2 - 37, 24, 74);
-    g.strokeRect(PITCH_W, PITCH_H / 2 - 37, 24, 74);
+    g.fillStyle(0xffffff, 0.3);
+    g.fillRect(-s(24), s(325 - 37), s(24), s(74));
+    g.fillRect(W, s(325 - 37), s(24), s(74));
+    g.lineStyle(6, line, 0.95);
+    g.strokeRect(-s(24), s(325 - 37), s(24), s(74));
+    g.strokeRect(W, s(325 - 37), s(24), s(74));
   }
 
   /** Smoothly tween all dots to their new positions (100ms). */
@@ -123,16 +153,16 @@ export class MatchScene {
   ): void {
     if (!this.scene) return;
     const tween = (
-      dot: import("phaser").GameObjects.Container,
+      dot: import("phaser").GameObjects.Container | undefined,
       p: { x: number; y: number } | undefined,
     ) => {
-      if (!p) return;
+      if (!p || !dot) return;
       const scene = this.scene!;
       scene.tweens.killTweensOf(dot);
       scene.tweens.add({
         targets: dot,
-        x: p.x,
-        y: p.y,
+        x: p.x * R,
+        y: p.y * R,
         duration: 100,
         ease: "Linear",
       });
@@ -144,8 +174,8 @@ export class MatchScene {
       scene.tweens.killTweensOf(this.ball);
       scene.tweens.add({
         targets: this.ball,
-        x: ballPos.x,
-        y: ballPos.y,
+        x: ballPos.x * R,
+        y: ballPos.y * R,
         duration: 90,
         ease: "Linear",
       });
@@ -208,16 +238,16 @@ export default function MatchCanvas({
       game = new Phaser.Game({
         type: Phaser.AUTO,
         parent: containerRef.current,
-        width: PITCH_W,
-        height: PITCH_H,
+        width: PITCH_W * R,
+        height: PITCH_H * R,
         backgroundColor: "#1f5c22",
         scale: {
           mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
-          width: PITCH_W,
-          height: PITCH_H,
+          width: PITCH_W * R,
+          height: PITCH_H * R,
         },
-        render: { antialias: true },
+        render: { antialias: true, antialiasGL: true },
         scene: [Scene],
       });
     });

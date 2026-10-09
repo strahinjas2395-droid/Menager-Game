@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Download, Trash2, Upload } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import { useGameStore } from "@/store/gameStore";
+import StepDots from "@/components/StepDots";
 import { downloadSave, importDatabase } from "@/database/storage";
 import type { GameSettings } from "@/types";
 
@@ -85,9 +86,9 @@ export default function SettingsPage() {
               ))}
             </div>
           </div>
-          <Slider label="Sound volume" value={settings.soundVolume}
+          <VolumeRow label="Sound volume" value={settings.soundVolume}
             onChange={(v) => void update({ soundVolume: v })} />
-          <Slider label="Music volume" value={settings.musicVolume}
+          <VolumeRow label="Music volume" value={settings.musicVolume}
             onChange={(v) => void update({ musicVolume: v })} />
           <ToggleRow label="Vibration on goal" value={settings.vibration}
             onChange={(v) => void update({ vibration: v })} />
@@ -161,22 +162,27 @@ export default function SettingsPage() {
   );
 }
 
-function Slider({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+function VolumeRow({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  // snap to the nearest 10% dot
+  const snapped = Math.round(value * 10) / 10;
   return (
     <div>
       <div className="flex justify-between text-xs">
         <span>{label}</span>
-        <span className="font-bold text-gold">{Math.round(value * 100)}%</span>
+        <span className="font-bold text-gold">{Math.round(snapped * 100)}%</span>
       </div>
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.05}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-1.5"
-      />
+      <div className="mt-0.5">
+        <StepDots
+          value={snapped}
+          min={0}
+          max={1}
+          step={0.1}
+          onChange={onChange}
+          startLabel="Mute"
+          endLabel="Max"
+          ariaLabel={label}
+        />
+      </div>
     </div>
   );
 }

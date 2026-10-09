@@ -92,7 +92,7 @@ export function resolveShot(
     gk.shotStopping * 2 -
     pressure * 10;
 
-  const goalProb = clamp(30 + score * 0.8, 2, 85);
+  const goalProb = clamp(21 + score * 0.8, 2, 70);
   if (rng.chance(goalProb / 100)) {
     return { goal: true, saved: false, blocked: false, wide: false };
   }

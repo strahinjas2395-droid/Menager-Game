@@ -55,8 +55,14 @@ export interface TeamSide {
 
 export interface SimOptions {
   seed: number;
-  /** game-seconds advanced per real second at speed 1 (default 6 => 90' in 15 min) */
+  /** match-clock seconds advanced per real second at speed 1 (default 6 => 90' in 15 min) */
   timeScale?: number;
+  /**
+   * world/movement seconds per real second at speed 1 (default 0.5).
+   * Decoupled from the clock: at the default 2x speed the players move at
+   * real-time pace while the clock runs at 12x (90' in ~7.5 min).
+   */
+  worldScale?: number;
 }
 
 export type Phase =
@@ -150,6 +156,8 @@ export class MatchSimulator {
   readonly away: TeamSide;
   private rng: SeededRNG;
   private timeScale: number;
+  private worldScale: number;
+  private worldTime = 0;
 
   gameTime = 0;
   addedTime90 = 0;
@@ -192,6 +200,7 @@ export class MatchSimulator {
     this.away = away;
     this.rng = new SeededRNG(options.seed);
     this.timeScale = options.timeScale ?? 6;
+    this.worldScale = options.worldScale ?? 0.5;
 
     this.homePlayers = this.buildPlayers(home);
     this.awayPlayers = this.buildPlayers(away);
@@ -267,8 +276,12 @@ export class MatchSimulator {
     if (!this.isRunning || this.finished) return;
     if (this.phase === "halftime" || this.phase === "fulltime") return;
 
-    const dt = dtReal * this.speed * this.timeScale; // game-seconds this step
-    this.gameTime += dt;
+    // Two clocks: the match clock races ahead while the world (movement,
+    // passes, decisions) advances at a real-time-ish pace.
+    const dtClock = dtReal * this.speed * this.timeScale;
+    const dtWorld = dtReal * this.speed * this.worldScale;
+    this.gameTime += dtClock;
+    this.worldTime += dtWorld;
 
     // ---- added time at 90'
     if (this.gameTime >= 5400 && this.addedTime90 === 0) {
@@ -291,38 +304,38 @@ export class MatchSimulator {
       return;
     }
 
-    this.phaseTimer -= dt;
-    this.decisionCd -= dt;
-    for (const sp of [...this.homePlayers, ...this.awayPlayers]) sp.tackleCd -= dt;
-    this.looseLockT -= dt;
+    this.phaseTimer -= dtWorld;
+    this.decisionCd -= dtWorld;
+    for (const sp of [...this.homePlayers, ...this.awayPlayers]) sp.tackleCd -= dtWorld;
+    this.looseLockT -= dtWorld;
     if (this.looseLockT <= 0) this.looseLockSide = null;
 
     switch (this.phase) {
       case "kickoff":
-        this.tickKickoff(dt);
+        this.tickKickoff(dtWorld);
         break;
       case "celebration":
-        this.tickCelebration(dt);
+        this.tickCelebration(dtWorld);
         break;
       case "setpiece":
-        this.tickSetPiece(dt);
-        this.tickMovement(dt, false);
+        this.tickSetPiece(dtWorld);
+        this.tickMovement(dtWorld, false);
         break;
       case "penalty":
-        this.tickPenalty(dt);
-        this.tickMovement(dt, false);
+        this.tickPenalty(dtWorld);
+        this.tickMovement(dtWorld, false);
         break;
       case "flight":
-        this.tickFlight(dt);
+        this.tickFlight(dtWorld);
         this.tickPossessionStat();
-        this.tickMovement(dt, false);
+        this.tickMovement(dtWorld, false);
         break;
       case "open":
-        this.tickOpen(dt);
-        this.tickMovement(dt, false);
+        this.tickOpen(dtWorld);
+        this.tickMovement(dtWorld, false);
         break;
       default:
-        this.tickMovement(dt, false);
+        this.tickMovement(dtWorld, false);
     }
 
     this.tickAIManager();
@@ -679,7 +692,7 @@ export class MatchSimulator {
       if (target) {
         this.executePass(side, sp, target);
       } else {
-        this.decisionCd = this.rng.float(0.5, 1.0);
+        this.decisionCd = this.rng.float(0.35, 0.7);
       }
       return;
     }
@@ -694,12 +707,12 @@ export class MatchSimulator {
     // 1) Shoot?
     const shootUrge =
       distToGoal < 16
-        ? 0.9
+        ? 0.92
         : distToGoal < 24
-          ? clamp(0.4 + (24 - distToGoal) * 0.03 + (ment - 3) * 0.05, 0.1, 0.85)
+          ? clamp(0.42 + (24 - distToGoal) * 0.032 + (ment - 3) * 0.05, 0.12, 0.85)
           : distToGoal < 34
-            ? clamp(0.07 + sp.p.longShots * 0.012 + (ment - 3) * 0.03, 0.02, 0.3)
-            : 0.01;
+            ? clamp(0.08 + sp.p.longShots * 0.013 + (ment - 3) * 0.03, 0.03, 0.35)
+            : 0.015;
 
     if (this.rng.chance(shootUrge)) {
       this.executeShot(side, sp, distToGoal);
@@ -734,7 +747,7 @@ export class MatchSimulator {
     }
 
     // 4) Nothing on: hold
-    this.decisionCd = this.rng.float(0.3, 0.6);
+    this.decisionCd = this.rng.float(0.2, 0.45);
   }
 
   private statsTackleAttempt(side: Side): void {
@@ -785,7 +798,7 @@ export class MatchSimulator {
       const progress = (mate.x - sp.x) * dir;
       const openness = clamp(this.nearestOpponentDist(mate.x, mate.y), 0, 30);
       const laneSafety = this.laneSafety(side, sp.x, sp.y, mate.x, mate.y);
-      let score = laneSafety * 1.6 + openness * 1.0 + progress * 0.16 - Math.abs(distM - 18) * 0.35;
+      let score = laneSafety * 1.6 + openness * 1.0 + progress * 0.26 - Math.abs(distM - 24) * 0.3;
 
       if (style === PlayStyle.LongBallDirect || style === PlayStyle.RouteOne) {
         if (distM > 30 && progress > 8) score += 8;
@@ -860,7 +873,7 @@ export class MatchSimulator {
     this.statsPassAttempt(side);
     if (outcome.success) this.statsPassComplete(side);
     this.bumpRating(sp, outcome.success ? 0.03 : -0.05);
-    this.assistWindow = { side, playerId: sp.p.id, t: this.gameTime };
+    this.assistWindow = { side, playerId: sp.p.id, t: this.worldTime };
 
     this.launchFlight({
       kind: "pass",
@@ -1127,7 +1140,7 @@ export class MatchSimulator {
     this.lastTouchSide = side;
     this.flight = null;
     this.phase = "open";
-    this.decisionCd = this.rng.float(0.5, 1.1);
+    this.decisionCd = this.rng.float(0.3, 0.7);
     this.ball.x = p.x;
     this.ball.y = p.y;
     this.looseLockSide = null;
@@ -1547,7 +1560,7 @@ export class MatchSimulator {
     if (sc) {
       sc.goals += 1;
       sc.rating = clamp(sc.rating + 0.9, 1, 10);
-      if (this.assistWindow && this.assistWindow.side === side && this.gameTime - this.assistWindow.t < 10) {
+      if (this.assistWindow && this.assistWindow.side === side && this.worldTime - this.assistWindow.t < 10) {
         const assister = players.find((p) => p.p.id === this.assistWindow!.playerId);
         if (assister && assister !== sc) {
           assister.assists += 1;

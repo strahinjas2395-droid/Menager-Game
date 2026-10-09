@@ -62,7 +62,7 @@ export function defaultTactics(formation = "4-3-3"): TacticalSetup {
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
-  defaultMatchSpeed: 4,
+  defaultMatchSpeed: 2,
   soundVolume: 0.7,
   musicVolume: 0.4,
   vibration: true,

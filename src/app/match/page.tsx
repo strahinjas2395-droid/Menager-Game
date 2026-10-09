@@ -46,7 +46,7 @@ function MatchScreen() {
   const [fullTime, setFullTime] = useState(false);
   const [paused, setPaused] = useState(false);
   const [speed, setSpeed] = useState<1 | 2 | 4 | 8>(
-    (save?.settings.defaultMatchSpeed as 1 | 2 | 4 | 8) ?? 4,
+    (save?.settings.defaultMatchSpeed as 1 | 2 | 4 | 8) ?? 2,
   );
   const speedRef = useRef<1 | 2 | 4 | 8>(speed);
   speedRef.current = speed;
