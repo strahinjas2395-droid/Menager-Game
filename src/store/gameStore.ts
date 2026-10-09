@@ -30,7 +30,7 @@ import { generateAllLeagues, hashStr } from "@/database/leagueGenerator";
 import { generateSeasonFixtures, TOTAL_WEEKS, simulateWeekAI, userFixturesForWeek, fixturesForWeek, advanceCup, advanceContinental, applyPromotionRelegation, processSeasonEnd, transferWindowOpen } from "@/engine/seasonManager";
 import { calculateStandings } from "@/engine/leagueEngine";
 import { buildTeamSide, type TeamSide } from "@/engine/matchSimulator";
-import { parseSquadInstructions } from "@/engine/directives";
+import { buildInstructionRoster, compileInstructionPlans } from "@/engine/directives";
 import { saveGame, loadGame, deleteSave } from "@/database/storage";
 import { aiTransferActivity } from "@/engine/transferEngine";
 import { CONTINENTAL_ID } from "@/engine/continentalEngine";
@@ -51,6 +51,8 @@ export function defaultTactics(formation = "4-3-3"): TacticalSetup {
     timeWasting: TimeWasting.Late,
     offsideTrap: false,
     counterAttack: false,
+    teamInstructions: "",
+    instructionCache: { players: {} },
     positionOverrides: {},
     setPieces: {
       cornerLeftId: null,
@@ -550,8 +552,20 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
       squad,
       tactics,
       isUserTeam: isUser,
-      directives: isUser ? parseSquadInstructions(squad) : undefined,
     });
+
+    if (isUser) {
+      const roster = buildInstructionRoster(squad, side.starters, side.roles, side.displayNumbers);
+      const plans = compileInstructionPlans(
+        squad,
+        tactics.teamInstructions ?? "",
+        tactics.instructionCache,
+        roster,
+      );
+      side.teamDirectives = plans.teamDirectives;
+      side.directives = plans.playerDirectives;
+    }
+
     // apply user's dragged pitch positions (drawn in home orientation)
     const overrides = tactics.positionOverrides;
     if (isUser && Object.keys(overrides).length > 0) {

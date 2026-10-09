@@ -2,7 +2,7 @@
  * matchWorker — runs MatchSimulator off the main thread.
  * Communicates via postMessage at up to 10 Hz.
  *
- * Main -> worker: init | start | pause | resume | speed | skip | sub | tactics | resumeHalf
+ * Main -> worker: init | start | pause | resume | speed | skip | sub | tactics | directives | resumeHalf
  * Worker -> main: ready | state | event | halfTime | fullTime
  */
 import { MatchSimulator, type MatchSnapshot, type Side, type TeamSide } from "./matchSimulator";
@@ -25,7 +25,12 @@ type InMsg =
   | { type: "skip" }
   | { type: "sub"; side: Side; starterIdx: number; benchIdx: number }
   | { type: "tactics"; side: Side; tactics: TacticalSetup }
-  | { type: "directives"; side: Side; directives: Record<string, PlayerDirectives> };
+  | {
+      type: "directives";
+      side: Side;
+      directives: Record<string, PlayerDirectives>;
+      teamDirectives?: PlayerDirectives;
+    };
 
 let sim: MatchSimulator | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -109,7 +114,7 @@ self.onmessage = (ev: MessageEvent<InMsg>) => {
       if (sim) post({ type: "state", state: sim.getState() });
       break;
     case "directives":
-      sim?.updateDirectives(msg.side, msg.directives);
+      sim?.updateDirectives(msg.side, msg.directives, msg.teamDirectives);
       break;
   }
 };

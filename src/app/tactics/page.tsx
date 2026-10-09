@@ -1,17 +1,24 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Save, Sparkles, X } from "lucide-react";
+import { LoaderCircle, Save, Sparkles, X } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import TopBar from "@/components/TopBar";
 import StepDots from "@/components/StepDots";
+import InstructionInterpretationView from "@/components/InstructionInterpretationView";
 import { useGameStore } from "@/store/gameStore";
 import { assignTacticalNumbers, selectBestXI } from "@/engine/matchSimulator";
 import { FORMATION_NAMES } from "@/engine/formations";
-import { parseInstructions, summarizeDirectives } from "@/engine/directives";
+import {
+  buildInstructionRoster,
+  instructionContextFingerprint,
+  isInterpretationCurrent,
+} from "@/engine/directives";
+import { interpretTacticalInstructions, type TacticalInstructionRequest } from "@/services/tacticalInterpreter";
 import {
   DefensiveLine, MentalityLevel, PlayStyle, PressingIntensity, TempoSetting,
-  TimeWasting, WidthSetting, type Player, type TacticalSetup,
+  TimeWasting, WidthSetting, type Player, type TacticalInstructionCache,
+  type TacticalSetup,
 } from "@/types";
 
 const PLAY_STYLES = Object.values(PlayStyle);
@@ -28,15 +35,6 @@ const STYLE_HELP: Record<PlayStyle, string> = {
   [PlayStyle.RouteOne]: "Early vertical service toward a target forward with runners collecting knockdowns.",
   [PlayStyle.Balanced]: "A mixed approach that adapts risk, width and progression to the situation.",
 };
-
-const INSTRUCTION_EXAMPLES = [
-  "Hold your position and keep passes short",
-  "Make runs in behind and take more shots from outside the box",
-  "Stay wide, take on defenders and whip early crosses",
-  "Cut inside, roam freely and play through balls",
-  "Act as a target man, hold up the ball and lay it off",
-  "Press aggressively and mark tightly",
-];
 
 type NumKey =
   | "tempo" | "passingLength" | "defensiveLine" | "pressing" | "width" | "mentality";
@@ -67,6 +65,8 @@ export default function TacticsPage() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const instructionsLoaded = useRef(false);
   const [saved, setSaved] = useState(false);
+  const [interpreting, setInterpreting] = useState<string | null>(null);
+  const [interpretWarning, setInterpretWarning] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const pitchRef = useRef<HTMLDivElement>(null);
   const dragIdx = useRef<number | null>(null);
@@ -76,7 +76,18 @@ export default function TacticsPage() {
   const [pitchW, setPitchW] = useState(0);
 
   useEffect(() => {
-    if (save && !draft) setDraft({ ...save.tacticalSetup, setPieces: { ...save.tacticalSetup.setPieces }, positionOverrides: { ...save.tacticalSetup.positionOverrides } });
+    if (save && !draft) {
+      setDraft({
+        ...save.tacticalSetup,
+        teamInstructions: save.tacticalSetup.teamInstructions ?? "",
+        instructionCache: {
+          team: save.tacticalSetup.instructionCache?.team,
+          players: { ...(save.tacticalSetup.instructionCache?.players ?? {}) },
+        },
+        setPieces: { ...save.tacticalSetup.setPieces },
+        positionOverrides: { ...save.tacticalSetup.positionOverrides },
+      });
+    }
   }, [save, draft]);
 
   // Keep the pitch fully inside its column (never taller than the viewport)
@@ -114,6 +125,14 @@ export default function TacticsPage() {
     [draft, squad],
   );
   const tacticalNumbers = useMemo(() => assignTacticalNumbers(xi?.roles ?? []), [xi]);
+  const instructionRoster = useMemo(
+    () => xi ? buildInstructionRoster(squad, xi.starters, xi.roles, tacticalNumbers) : [],
+    [squad, xi, tacticalNumbers],
+  );
+  const instructionFingerprint = useMemo(
+    () => instructionContextFingerprint(instructionRoster),
+    [instructionRoster],
+  );
 
   if (!save || !draft || !xi) {
     return (
@@ -190,8 +209,95 @@ export default function TacticsPage() {
     dragMoved.current = false;
   };
 
+  const applyInterpretations = async (
+    base: TacticalSetup,
+    requests: TacticalInstructionRequest[],
+    busyKey: string,
+  ): Promise<TacticalSetup> => {
+    if (!requests.length) return base;
+    setInterpreting(busyKey);
+    setInterpretWarning(null);
+    const result = await interpretTacticalInstructions(instructionRoster, requests);
+    const cache: TacticalInstructionCache = {
+      team: base.instructionCache?.team,
+      players: { ...(base.instructionCache?.players ?? {}) },
+    };
+    for (const request of requests) {
+      const interpretation = result.interpretations[request.key];
+      if (!interpretation) continue;
+      if (request.scope === "team") cache.team = interpretation;
+      else if (request.subjectPlayerId) cache.players[request.subjectPlayerId] = interpretation;
+    }
+    setInterpretWarning(result.warning ?? null);
+    setInterpreting(null);
+    return { ...base, instructionCache: cache };
+  };
+
+  const interpretTeam = async () => {
+    const text = draft.teamInstructions ?? "";
+    if (!text.trim()) return;
+    const next = await applyInterpretations(
+      draft,
+      [{ key: "team", text, scope: "team" }],
+      "team",
+    );
+    setDraft((current) => current ? { ...current, instructionCache: next.instructionCache } : current);
+  };
+
+  const interpretPlayer = async () => {
+    if (!selectedPlayer || !selectedText.trim()) return;
+    const next = await applyInterpretations(
+      draft,
+      [{ key: `player:${selectedPlayer.id}`, text: selectedText, scope: "player", subjectPlayerId: selectedPlayer.id }],
+      selectedPlayer.id,
+    );
+    setDraft((current) => current ? { ...current, instructionCache: next.instructionCache } : current);
+  };
+
   const saveTactics = async () => {
-    await updateTactics(draft);
+    const requests: TacticalInstructionRequest[] = [];
+    const teamText = draft.teamInstructions ?? "";
+    if (teamText.trim() && !isInterpretationCurrent(
+      draft.instructionCache?.team,
+      teamText,
+      instructionFingerprint,
+      "team",
+    )) {
+      requests.push({ key: "team", text: teamText, scope: "team" });
+    }
+    for (const player of squad) {
+      const text = instructionDraft[player.id] ?? "";
+      if (!text.trim()) continue;
+      if (!isInterpretationCurrent(
+        draft.instructionCache?.players[player.id],
+        text,
+        instructionFingerprint,
+        "player",
+        player.id,
+      )) {
+        requests.push({
+          key: `player:${player.id}`,
+          text,
+          scope: "player",
+          subjectPlayerId: player.id,
+        });
+      }
+    }
+
+    let interpretedDraft = await applyInterpretations(draft, requests, "all");
+    const prunedPlayers = Object.fromEntries(
+      Object.entries(interpretedDraft.instructionCache?.players ?? {})
+        .filter(([playerId]) => (instructionDraft[playerId] ?? "").trim()),
+    );
+    interpretedDraft = {
+      ...interpretedDraft,
+      instructionCache: {
+        team: teamText.trim() ? interpretedDraft.instructionCache?.team : undefined,
+        players: prunedPlayers,
+      },
+    };
+    setDraft(interpretedDraft);
+    await updateTactics(interpretedDraft);
     await updatePlayerInstructions(instructionDraft);
     setSaved(true);
     setTimeout(() => setSaved(false), 1800);
@@ -201,7 +307,21 @@ export default function TacticsPage() {
   const pressTo = pressFrom + PRESS_REACH[Number(draft.pressing)];
   const selectedPlayer = squad.find((p) => p.id === selectedPlayerId) ?? squad[0];
   const selectedText = selectedPlayer ? instructionDraft[selectedPlayer.id] ?? "" : "";
-  const understood = summarizeDirectives(parseInstructions(selectedText));
+  const selectedCached = selectedPlayer ? draft.instructionCache?.players[selectedPlayer.id] : undefined;
+  const selectedInterpretation = selectedPlayer && isInterpretationCurrent(
+    selectedCached,
+    selectedText,
+    instructionFingerprint,
+    "player",
+    selectedPlayer.id,
+  ) ? selectedCached : undefined;
+  const teamCached = draft.instructionCache?.team;
+  const teamInterpretation = isInterpretationCurrent(
+    teamCached,
+    draft.teamInstructions ?? "",
+    instructionFingerprint,
+    "team",
+  ) ? teamCached : undefined;
   const playerCard = playerCardId ? xi.starters.find((p) => p.id === playerCardId) ?? null : null;
   const playerCardIdx = playerCard ? xi.starters.findIndex((p) => p.id === playerCard.id) : -1;
 
@@ -403,6 +523,43 @@ export default function TacticsPage() {
                   ))}
                 </div>
               </div>
+
+              <div className="border-t border-white/10 pt-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <span className="stat-label">Talk to the whole team</span>
+                    <p className="mt-1 text-[10px] leading-relaxed text-white/40">
+                      Write in your own words and language—even with shorthand or spelling mistakes. Cloud AI resolves meaning, players and roles into match behavior.
+                    </p>
+                  </div>
+                  <Sparkles size={17} className="mt-0.5 shrink-0 text-gold" />
+                </div>
+                <textarea
+                  value={draft.teamInstructions ?? ""}
+                  onChange={(e) => set("teamInstructions", e.target.value)}
+                  placeholder="Tell the team what you want them to do and when…"
+                  rows={3}
+                  maxLength={600}
+                  className="mt-2 w-full resize-none rounded-xl border border-white/10 bg-navy p-3 text-xs leading-relaxed text-white outline-none placeholder:text-white/25 focus:border-gold"
+                />
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-[9px] text-white/30">{(draft.teamInstructions ?? "").length}/600</span>
+                  <button
+                    type="button"
+                    disabled={!draft.teamInstructions?.trim() || interpreting !== null}
+                    onClick={() => void interpretTeam()}
+                    className="flex items-center gap-1.5 rounded-lg border border-gold/35 bg-gold/10 px-2.5 py-1.5 text-[9px] font-bold text-gold disabled:opacity-35"
+                  >
+                    {interpreting === "team" ? <LoaderCircle size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                    Understand with AI
+                  </button>
+                </div>
+                <InstructionInterpretationView
+                  text={draft.teamInstructions ?? ""}
+                  interpretation={teamInterpretation}
+                  stale={Boolean(draft.teamInstructions?.trim() && teamCached && !teamInterpretation)}
+                />
+              </div>
             </div>
           </section>
 
@@ -412,7 +569,7 @@ export default function TacticsPage() {
               <div>
                 <span className="stat-label">Individual Instructions</span>
                 <p className="mt-1 text-[10px] leading-relaxed text-white/40">
-                  Write naturally. The tactical interpreter converts your note into decisions, movement and defensive behaviour.
+                  Describe intent in your own words or language. The AI understands context and resolves teammate references instead of scanning for command phrases.
                 </p>
               </div>
               <Sparkles size={18} className="shrink-0 text-gold" />
@@ -437,39 +594,36 @@ export default function TacticsPage() {
             <textarea
               value={selectedText}
               onChange={(e) => selectedPlayer && setInstructionDraft((d) => ({ ...d, [selectedPlayer.id]: e.target.value }))}
-              placeholder="Example: Stay wide, take on defenders and whip early crosses. Press their full-back hard."
+              placeholder="Tell this player what you mean in any natural wording…"
               rows={3}
-              maxLength={300}
+              maxLength={600}
               className="mt-2 w-full resize-none rounded-xl border border-white/10 bg-navy p-3 text-xs leading-relaxed text-white outline-none placeholder:text-white/25 focus:border-gold"
             />
-            <div className="mt-1 text-right text-[9px] text-white/30">{selectedText.length}/300</div>
-
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {understood.length ? understood.map((label) => (
-                <span key={label} className="rounded-full border border-gold/30 bg-gold/10 px-2 py-1 text-[9px] font-semibold text-gold">
-                  {label}
-                </span>
-              )) : (
-                <span className="text-[10px] text-white/35">No instruction — follows the team system.</span>
-              )}
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-[9px] text-white/30">{selectedText.length}/600</span>
+              <button
+                type="button"
+                disabled={!selectedText.trim() || interpreting !== null}
+                onClick={() => void interpretPlayer()}
+                className="flex items-center gap-1.5 rounded-lg border border-gold/35 bg-gold/10 px-2.5 py-1.5 text-[9px] font-bold text-gold disabled:opacity-35"
+              >
+                {interpreting === selectedPlayer?.id ? <LoaderCircle size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                Understand with AI
+              </button>
             </div>
 
-            <details className="mt-3">
-              <summary className="cursor-pointer text-[10px] font-semibold text-white/45">Example phrases</summary>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {INSTRUCTION_EXAMPLES.map((example) => (
-                  <button
-                    key={example}
-                    type="button"
-                    onClick={() => selectedPlayer && setInstructionDraft((d) => ({ ...d, [selectedPlayer.id]: example }))}
-                    className="rounded-lg border border-white/10 bg-navy px-2 py-1.5 text-left text-[9px] text-white/55 hover:border-gold/40 hover:text-white"
-                  >
-                    {example}
-                  </button>
-                ))}
-              </div>
-            </details>
+            <InstructionInterpretationView
+              text={selectedText}
+              interpretation={selectedInterpretation}
+              stale={Boolean(selectedText.trim() && selectedCached && !selectedInterpretation)}
+            />
           </section>
+
+          {interpretWarning && (
+            <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10px] leading-relaxed text-amber-200">
+              Cloud AI was unavailable: {interpretWarning} The saved result is visibly marked as an offline fallback and can be reinterpreted later.
+            </div>
+          )}
 
           {/* Set pieces */}
           <section className="card-panel mt-3">
@@ -500,8 +654,16 @@ export default function TacticsPage() {
       )}
 
       <div className="fixed inset-x-0 bottom-14 z-30 mx-auto max-w-lg px-4 pb-2">
-        <button onClick={() => void saveTactics()} className="btn-gold flex w-full items-center justify-center gap-2">
-          {saved ? "Saved ✓" : (<><Save size={16} /> Save Tactics</>)}
+        <button
+          disabled={interpreting !== null}
+          onClick={() => void saveTactics()}
+          className="btn-gold flex w-full items-center justify-center gap-2 disabled:opacity-60"
+        >
+          {interpreting === "all"
+            ? <><LoaderCircle size={16} className="animate-spin" /> Understanding instructions…</>
+            : saved
+              ? "Saved ✓"
+              : <><Save size={16} /> Save Tactics</>}
         </button>
       </div>
 

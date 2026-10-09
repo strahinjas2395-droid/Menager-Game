@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getMatchContext, useGameStore } from "@/store/gameStore";
+import { buildInstructionRoster, instructionContextFingerprint } from "@/engine/directives";
 import { LEAGUES_DATA, slugify } from "@/database/leagueGenerator";
 import { Difficulty, type MatchResult, type MatchStats } from "@/types";
 
@@ -84,6 +85,57 @@ describe("core game loop (integration)", () => {
       holdPosition: true,
       shortPassing: true,
       pressHard: true,
+    });
+
+    // A persisted AI interpretation—not a keyword match—also reaches both
+    // team-wide behavior and a resolved player assignment.
+    const fullSquad = store().save!.world.clubs[clubId].playerIds
+      .map((id) => store().save!.world.players[id]);
+    const roster = buildInstructionRoster(
+      fullSquad,
+      instructedSide.starters,
+      instructedSide.roles,
+      instructedSide.displayNumbers,
+    );
+    const contextFingerprint = instructionContextFingerprint(roster);
+    const targetId = instructedSide.starters.find((player) => player.id !== starterId)!.id;
+    const teamText = "evryone boot itt away rite now; our one shud fynd the other lad";
+    await store().updateTactics({
+      ...store().save!.tacticalSetup,
+      teamInstructions: teamText,
+      instructionCache: {
+        players: {},
+        team: {
+          schemaVersion: 1,
+          input: teamText,
+          scope: "team",
+          contextFingerprint,
+          directives: { clearImmediately: true },
+          assignments: [{
+            playerId: starterId,
+            playerName: `${instructedSide.starters[0].firstName} ${instructedSide.starters[0].lastName}`,
+            directives: {
+              directPassing: true,
+              preferredTargetId: targetId,
+              targetPriority: 1,
+              targetDelivery: "aerial",
+            },
+          }],
+          understood: ["Clear danger immediately", "Starter deliberately seeks the selected teammate"],
+          unsupported: [],
+          source: "ai",
+          model: "integration-test",
+          createdAt: 1,
+        },
+      },
+    });
+    ctx = getMatchContext(store().save!, week1UserFixture.id)!;
+    const semanticSide = week1UserFixture.homeClubId === clubId ? ctx.home : ctx.away;
+    expect(semanticSide.teamDirectives).toEqual({ clearImmediately: true });
+    expect(semanticSide.directives?.[starterId]).toMatchObject({
+      preferredTargetId: targetId,
+      targetPriority: 1,
+      targetDelivery: "aerial",
     });
 
     const buildResult = (fixtureId: string): MatchResult => {

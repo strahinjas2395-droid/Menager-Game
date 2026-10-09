@@ -96,6 +96,16 @@ export default function SettingsPage() {
             onChange={(v) => void update({ autoPressConference: v })} />
         </section>
 
+        <section className="card-panel mt-3 space-y-2">
+          <span className="stat-label">Tactical language AI</span>
+          <p className="text-[11px] leading-relaxed text-white/50">
+            Natural-language team and player instructions use a small hosted model through Puter. There is no developer API key or local model download, so it stays light on phones. Puter may ask you to sign in the first time.
+          </p>
+          <p className="rounded-lg border border-white/10 bg-navy px-3 py-2 text-[10px] leading-relaxed text-white/35">
+            The instruction and fictional squad context are sent for interpretation. Validated results are cached in your save; if cloud AI is unavailable, the game clearly labels its limited offline fallback.
+          </p>
+        </section>
+
         <section className="card-panel mt-3 space-y-3">
           <span className="stat-label">Display</span>
           <button onClick={toggleFullscreen} className="btn-dark w-full text-xs">Toggle Fullscreen</button>

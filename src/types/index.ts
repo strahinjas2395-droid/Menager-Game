@@ -149,6 +149,8 @@ export enum MatchEventType {
   PenaltyMissed = "PenaltyMissed",
   Injury = "Injury",
   Offside = "Offside",
+  /** Observable evidence that a natural-language tactical instruction fired. */
+  Instruction = "Instruction",
 }
 
 export enum TimeWasting {
@@ -175,7 +177,7 @@ export interface PlayerContract {
 export interface Player {
   // Identity
   id: string;
-  /** Free-text individual instructions from the manager; parsed by engine/directives.ts */
+  /** Free-text manager note; interpreted to a validated cached tactical plan. */
   individualInstructions?: string;
   firstName: string;
   lastName: string;
@@ -371,6 +373,74 @@ export interface SetPieceTakers {
   captainId: string | null;
 }
 
+export interface TacticalDirectives {
+  // Shape and movement
+  holdPosition?: boolean;
+  forwardRuns?: boolean;
+  roam?: boolean;
+  stayWide?: boolean;
+  cutInside?: boolean;
+  /** A genuine defensive assignment, even when the player's nominal role is attacking. */
+  defensiveDuty?: boolean;
+
+  // Decisions in possession
+  shootFromDistance?: boolean;
+  avoidShooting?: boolean;
+  dribbleMore?: boolean;
+  dribbleLess?: boolean;
+  riskyPasses?: boolean;
+  shortPassing?: boolean;
+  directPassing?: boolean;
+  targetMan?: boolean;
+  earlyCross?: boolean;
+  switchPlay?: boolean;
+  /** Clear rather than trying to retain the ball in dangerous defensive situations. */
+  clearImmediately?: boolean;
+
+  // Work without the ball
+  tightMarking?: boolean;
+  pressHard?: boolean;
+  pressLess?: boolean;
+  conserveEnergy?: boolean;
+
+  // Deliberate service to a teammate. The id is validated against the current squad.
+  preferredTargetId?: string;
+  preferredTargetName?: string;
+  /** 0..1; values near 1 make the recipient the first option whenever plausible. */
+  targetPriority?: number;
+  targetDelivery?: "ground" | "aerial" | "mixed";
+}
+
+export interface TacticalPlayerAssignment {
+  playerId: string;
+  playerName: string;
+  directives: TacticalDirectives;
+}
+
+export interface TacticalInstructionInterpretation {
+  schemaVersion: 1;
+  input: string;
+  scope: "team" | "player";
+  subjectPlayerId?: string;
+  contextFingerprint: string;
+  /** Applies to the whole team for team notes, or to the selected subject. */
+  directives: TacticalDirectives;
+  /** A team note may address a named/numbered/role-specific player or group. */
+  assignments?: TacticalPlayerAssignment[];
+  /** Short, manager-facing statements generated from the semantic result. */
+  understood: string[];
+  /** Meaning that the current simulation cannot represent safely. */
+  unsupported: string[];
+  source: "ai" | "offline";
+  model?: string;
+  createdAt: number;
+}
+
+export interface TacticalInstructionCache {
+  team?: TacticalInstructionInterpretation;
+  players: Record<string, TacticalInstructionInterpretation>;
+}
+
 export interface TacticalSetup {
   formation: string;
   playStyle: PlayStyle;
@@ -383,6 +453,10 @@ export interface TacticalSetup {
   timeWasting: TimeWasting;
   offsideTrap: boolean;
   counterAttack: boolean;
+  /** Natural-language instruction for the whole side. */
+  teamInstructions?: string;
+  /** Validated semantic plans. Text remains the source of truth; stale entries are ignored. */
+  instructionCache?: TacticalInstructionCache;
   /** playerId -> pitch position override (x,y in 0-1000 / 0-650) */
   positionOverrides: Record<string, { x: number; y: number }>;
   setPieces: SetPieceTakers;

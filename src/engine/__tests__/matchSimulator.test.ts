@@ -236,9 +236,10 @@ describe("MatchSimulator", () => {
     sim.updateTactics("home", changed);
     sim.updateDirectives("home", {
       [home.starters[9].id]: { targetMan: true, holdPosition: true },
-    });
+    }, { clearImmediately: true });
     expect(sim.home.tactics.formation).toBe("4-4-2");
     expect(sim.home.tactics.pressing).toBe(PressingIntensity.Extreme);
+    expect(sim.home.teamDirectives).toEqual({ clearImmediately: true });
     expect(sim.home.roles.filter((r) => r === "ST")).toHaveLength(2);
     expect(sim.getState().gameTime).toBe(beforeTime); // tactical UI does not restart the match
   });
@@ -308,6 +309,77 @@ describe("MatchSimulator", () => {
       ).length;
     }
     expect(rangedAttempts).toBeGreaterThan(0);
+  });
+
+  it("turns a resolved recipient into deliberate aerial service during play", () => {
+    let targetedService = 0;
+    for (const seed of [901, 902, 903]) {
+      const { sim, home } = setup(seed);
+      const leftBack = home.starters[home.roles.indexOf("LB")];
+      const striker = home.starters[home.roles.indexOf("ST")];
+      expect(leftBack).toBeTruthy();
+      expect(striker).toBeTruthy();
+      home.directives = {
+        [leftBack.id]: {
+          directPassing: true,
+          preferredTargetId: striker.id,
+          preferredTargetName: `${striker.firstName} ${striker.lastName}`,
+          targetPriority: 1,
+          targetDelivery: "aerial",
+        },
+      };
+      playFullMatch(sim);
+      targetedService += sim.getEvents().filter(
+        (event) => event.type === "Instruction" &&
+          event.playerId === leftBack.id &&
+          event.text.includes(`seeks ${striker.lastName}`) &&
+          event.text.includes("aerial ball"),
+      ).length;
+    }
+    expect(targetedService).toBeGreaterThanOrEqual(2);
+  });
+
+  it("makes a striker with a defensive duty occupy a genuinely deeper block", () => {
+    const sampleStrikerX = (defensiveDuty: boolean) => {
+      const { sim, home } = setup(944);
+      const strikerIndex = home.roles.indexOf("ST");
+      const striker = home.starters[strikerIndex];
+      if (defensiveDuty) {
+        home.directives = {
+          [striker.id]: { defensiveDuty: true, holdPosition: true, forwardRuns: false },
+        };
+      }
+      const samples: number[] = [];
+      for (let i = 0; i < 3600 && sim.getState().phase !== "halftime"; i++) {
+        sim.tick(0.1);
+        const state = sim.getState();
+        if (state.phase === "open" && state.possession === "away") {
+          samples.push(state.homePositions[strikerIndex].x);
+        }
+      }
+      expect(samples.length).toBeGreaterThan(100);
+      return samples.reduce((sum, x) => sum + x, 0) / samples.length;
+    };
+
+    const normalX = sampleStrikerX(false);
+    const defensiveX = sampleStrikerX(true);
+    expect(defensiveX).toBeLessThan(normalX - 120);
+    expect(defensiveX).toBeLessThan(520);
+  });
+
+  it("executes a team-wide immediate-clearance plan only in defensive danger", () => {
+    let clearances = 0;
+    for (const seed of [951, 952]) {
+      const { sim, home } = setup(seed);
+      home.teamDirectives = { clearImmediately: true };
+      playFullMatch(sim);
+      const events = sim.getEvents().filter(
+        (event) => event.type === "Instruction" && event.text.includes("clears the danger immediately"),
+      );
+      clearances += events.length;
+      expect(events.every((event) => event.clubId === home.clubId)).toBe(true);
+    }
+    expect(clearances).toBeGreaterThanOrEqual(2);
   });
 
 });

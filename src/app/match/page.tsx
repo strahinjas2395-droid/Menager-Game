@@ -2,18 +2,28 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Pause, Play, FastForward, Gauge, SlidersHorizontal, X, Check } from "lucide-react";
+import { Pause, Play, FastForward, Gauge, SlidersHorizontal, X, Check, LoaderCircle, Sparkles } from "lucide-react";
 import MatchCanvas, { type MatchScene } from "@/components/MatchCanvas";
 import StepDots from "@/components/StepDots";
+import InstructionInterpretationView from "@/components/InstructionInterpretationView";
 import { getMatchContext, useGameStore, type MatchContext } from "@/store/gameStore";
-import type { MatchSnapshot, Side } from "@/engine/matchSimulator";
-import type { MatchEvent, MatchResult, MatchStats, TacticalSetup } from "@/types";
+import { selectBestXI, type MatchSnapshot, type Side } from "@/engine/matchSimulator";
+import type {
+  MatchEvent, MatchResult, MatchStats, TacticalInstructionCache, TacticalSetup,
+} from "@/types";
 import {
   CompetitionType, DefensiveLine, MatchEventType, MentalityLevel, PlayStyle,
   PressingIntensity, TempoSetting, TimeWasting, WidthSetting,
 } from "@/types";
 import { FORMATION_NAMES } from "@/engine/formations";
-import { parseInstructions, parseSquadInstructions, summarizeDirectives } from "@/engine/directives";
+import {
+  buildInstructionRoster,
+  compileInstructionPlans,
+  instructionContextFingerprint,
+  isInterpretationCurrent,
+  type InstructionRosterPlayer,
+} from "@/engine/directives";
+import { interpretTacticalInstructions, type TacticalInstructionRequest } from "@/services/tacticalInterpreter";
 import { expectedGoals } from "@/engine/leagueEngine";
 import { penaltyShootout } from "@/engine/cupEngine";
 import { SeededRNG } from "@/database/rng";
@@ -65,16 +75,54 @@ function MatchScreen() {
   const [showTactics, setShowTactics] = useState(false);
   const [liveTactics, setLiveTactics] = useState<TacticalSetup | null>(null);
   const [liveInstructions, setLiveInstructions] = useState<Record<string, string>>({});
+  const [liveInterpreting, setLiveInterpreting] = useState(false);
+  const [liveInterpretWarning, setLiveInterpretWarning] = useState<string | null>(null);
   const resumeAfterTactics = useRef(false);
 
   const isKnockout = ctx?.fixture.competitionType !== CompetitionType.League;
   const userSide: Side = ctx?.home.isUserTeam ? "home" : "away";
+  const liveInstructionRoster = useMemo(() => {
+    if (!ctx || !save) return [];
+    const team = ctx.home.isUserTeam ? ctx.home : ctx.away;
+    const club = save.world.clubs[save.userClubId];
+    const fullSquad = (club?.playerIds ?? [])
+      .map((id) => save.world.players[id])
+      .filter((player): player is NonNullable<typeof player> => Boolean(player));
+    const currentLineup = ctx.home.isUserTeam ? snapshot?.homeLineup : snapshot?.awayLineup;
+    const activePlayers = (currentLineup ?? [])
+      .map((entry) => save.world.players[entry.playerId])
+      .filter((player): player is NonNullable<typeof player> => Boolean(player));
+    const roleAssignment = selectBestXI(
+      activePlayers.length === 11 ? activePlayers : team.starters,
+      liveTactics?.formation ?? team.tactics.formation,
+    );
+    const stableNumbers = roleAssignment.starters.map((player) =>
+      currentLineup?.find((entry) => entry.playerId === player.id)?.shirtNumber ??
+      team.displayNumbers[team.starters.findIndex((starter) => starter.id === player.id)] ??
+      player.shirtNumber,
+    );
+    return buildInstructionRoster(
+      fullSquad.length ? fullSquad : [...team.starters, ...team.bench],
+      roleAssignment.starters,
+      roleAssignment.roles,
+      stableNumbers,
+    );
+  }, [ctx, save, snapshot?.homeLineup, snapshot?.awayLineup, liveTactics?.formation]);
+  const liveInstructionFingerprint = useMemo(
+    () => instructionContextFingerprint(liveInstructionRoster),
+    [liveInstructionRoster],
+  );
 
   useEffect(() => {
     if (!ctx) return;
     const source = ctx.home.isUserTeam ? ctx.home.tactics : ctx.away.tactics;
     setLiveTactics({
       ...source,
+      teamInstructions: source.teamInstructions ?? "",
+      instructionCache: {
+        team: source.instructionCache?.team,
+        players: { ...(source.instructionCache?.players ?? {}) },
+      },
       positionOverrides: { ...source.positionOverrides },
       setPieces: { ...source.setPieces },
     });
@@ -194,13 +242,78 @@ function MatchScreen() {
     resumeAfterTactics.current = false;
   };
 
-  const applyLiveTactics = () => {
-    if (liveTactics) post({ type: "tactics", side: userSide, tactics: liveTactics });
-    const matchPlayers = userSide === "home" ? ctx?.home.starters.concat(ctx.home.bench) : ctx?.away.starters.concat(ctx.away.bench);
-    if (matchPlayers) {
-      const withLiveText = matchPlayers.map((p) => ({ ...p, individualInstructions: liveInstructions[p.id] ?? "" }));
-      post({ type: "directives", side: userSide, directives: parseSquadInstructions(withLiveText) });
+  const applyLiveTactics = async () => {
+    if (!liveTactics || !ctx) return;
+    const matchPlayers = userSide === "home"
+      ? ctx.home.starters.concat(ctx.home.bench)
+      : ctx.away.starters.concat(ctx.away.bench);
+    const withLiveText = matchPlayers.map((player) => ({
+      ...player,
+      individualInstructions: liveInstructions[player.id] ?? "",
+    }));
+    const requests: TacticalInstructionRequest[] = [];
+    const teamText = liveTactics.teamInstructions ?? "";
+    if (teamText.trim() && !isInterpretationCurrent(
+      liveTactics.instructionCache?.team,
+      teamText,
+      liveInstructionFingerprint,
+      "team",
+    )) {
+      requests.push({ key: "team", text: teamText, scope: "team" });
     }
+    for (const player of withLiveText) {
+      const text = player.individualInstructions ?? "";
+      if (!text.trim()) continue;
+      if (!isInterpretationCurrent(
+        liveTactics.instructionCache?.players[player.id],
+        text,
+        liveInstructionFingerprint,
+        "player",
+        player.id,
+      )) {
+        requests.push({
+          key: `player:${player.id}`,
+          text,
+          scope: "player",
+          subjectPlayerId: player.id,
+        });
+      }
+    }
+
+    setLiveInterpreting(true);
+    setLiveInterpretWarning(null);
+    let updatedTactics = liveTactics;
+    if (requests.length) {
+      const result = await interpretTacticalInstructions(liveInstructionRoster, requests);
+      const cache: TacticalInstructionCache = {
+        team: liveTactics.instructionCache?.team,
+        players: { ...(liveTactics.instructionCache?.players ?? {}) },
+      };
+      for (const request of requests) {
+        const interpretation = result.interpretations[request.key];
+        if (!interpretation) continue;
+        if (request.scope === "team") cache.team = interpretation;
+        else if (request.subjectPlayerId) cache.players[request.subjectPlayerId] = interpretation;
+      }
+      updatedTactics = { ...liveTactics, instructionCache: cache };
+      setLiveTactics(updatedTactics);
+      setLiveInterpretWarning(result.warning ?? null);
+    }
+
+    const plans = compileInstructionPlans(
+      withLiveText,
+      updatedTactics.teamInstructions ?? "",
+      updatedTactics.instructionCache,
+      liveInstructionRoster,
+    );
+    post({ type: "tactics", side: userSide, tactics: updatedTactics });
+    post({
+      type: "directives",
+      side: userSide,
+      directives: plans.playerDirectives,
+      teamDirectives: plans.teamDirectives,
+    });
+    setLiveInterpreting(false);
     closeTactics();
   };
 
@@ -416,7 +529,21 @@ function MatchScreen() {
           instructionPlayers={userSide === "home" ? ctx.home.starters.concat(ctx.home.bench) : ctx.away.starters.concat(ctx.away.bench)}
           instructionText={liveInstructions}
           onInstructionText={setLiveInstructions}
+          instructionRoster={liveInstructionRoster}
+          instructionFingerprint={liveInstructionFingerprint}
+          interpreting={liveInterpreting}
+          interpretWarning={liveInterpretWarning}
         />
+      )}
+
+      {liveInterpretWarning && !showTactics && (
+        <button
+          type="button"
+          onClick={() => setLiveInterpretWarning(null)}
+          className="absolute bottom-3 left-1/2 z-[65] max-w-[90%] -translate-x-1/2 rounded-xl border border-amber-400/30 bg-black/90 px-3 py-2 text-[9px] leading-relaxed text-amber-200 shadow-xl"
+        >
+          Cloud AI was unavailable; a basic fallback was applied. Tap to dismiss and retry from Match Tactics when online.
+        </button>
       )}
 
       {showStats && snapshot && (
@@ -529,6 +656,7 @@ function LiveTacticsPanel({
   tactics, onChange, onApply, onClose, home, away, score, minute,
   currentLineup, bench, pendingSub, onPendingSub, onSub, atHalfTime,
   instructionPlayers, instructionText, onInstructionText,
+  instructionRoster, instructionFingerprint, interpreting, interpretWarning,
 }: {
   tactics: TacticalSetup;
   onChange: (t: TacticalSetup) => void;
@@ -547,8 +675,14 @@ function LiveTacticsPanel({
   instructionPlayers: MatchContext["home"]["starters"];
   instructionText: Record<string, string>;
   onInstructionText: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  instructionRoster: InstructionRosterPlayer[];
+  instructionFingerprint: string;
+  interpreting: boolean;
+  interpretWarning: string | null;
 }) {
   const [instructionPlayerId, setInstructionPlayerId] = useState(instructionPlayers[0]?.id ?? "");
+  const [interpretingKey, setInterpretingKey] = useState<string | null>(null);
+  const [localWarning, setLocalWarning] = useState<string | null>(null);
   const set = <K extends keyof TacticalSetup>(key: K, value: TacticalSetup[K]) =>
     onChange({ ...tactics, [key]: value });
   const activeIds = new Set(currentLineup.map((p) => p.playerId));
@@ -556,6 +690,40 @@ function LiveTacticsPanel({
   const selectedBenchIdx = availableBench.some(({ i }) => i === pendingSub.on)
     ? pendingSub.on
     : (availableBench[0]?.i ?? 0);
+  const selectedInstructionText = instructionText[instructionPlayerId] ?? "";
+  const selectedCached = tactics.instructionCache?.players[instructionPlayerId];
+  const selectedInterpretation = isInterpretationCurrent(
+    selectedCached,
+    selectedInstructionText,
+    instructionFingerprint,
+    "player",
+    instructionPlayerId,
+  ) ? selectedCached : undefined;
+  const teamCached = tactics.instructionCache?.team;
+  const teamInterpretation = isInterpretationCurrent(
+    teamCached,
+    tactics.teamInstructions ?? "",
+    instructionFingerprint,
+    "team",
+  ) ? teamCached : undefined;
+
+  const interpretNow = async (request: TacticalInstructionRequest, key: string) => {
+    setInterpretingKey(key);
+    setLocalWarning(null);
+    const result = await interpretTacticalInstructions(instructionRoster, [request]);
+    const interpretation = result.interpretations[request.key];
+    if (interpretation) {
+      const cache: TacticalInstructionCache = {
+        team: tactics.instructionCache?.team,
+        players: { ...(tactics.instructionCache?.players ?? {}) },
+      };
+      if (request.scope === "team") cache.team = interpretation;
+      else if (request.subjectPlayerId) cache.players[request.subjectPlayerId] = interpretation;
+      onChange({ ...tactics, instructionCache: cache });
+    }
+    setLocalWarning(result.warning ?? null);
+    setInterpretingKey(null);
+  };
 
   const preset = (kind: "protect" | "control" | "chase") => {
     if (kind === "protect") {
@@ -630,10 +798,42 @@ function LiveTacticsPanel({
             </label>
           </div>
 
+          <div className="mt-4 rounded-xl border border-gold/20 bg-card p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="stat-label">Live Team Instruction</span>
+              <Sparkles size={13} className="text-gold" />
+            </div>
+            <textarea
+              value={tactics.teamInstructions ?? ""}
+              onChange={(event) => set("teamInstructions", event.target.value)}
+              placeholder="Tell the whole team what to change right now…"
+              rows={2}
+              maxLength={600}
+              className="mt-2 w-full resize-none rounded-lg border border-white/10 bg-navy p-2 text-[10px] leading-relaxed outline-none focus:border-gold"
+            />
+            <div className="mt-1 flex justify-end">
+              <button
+                type="button"
+                disabled={!tactics.teamInstructions?.trim() || interpreting || interpretingKey !== null}
+                onClick={() => void interpretNow({ key: "team", text: tactics.teamInstructions ?? "", scope: "team" }, "team")}
+                className="flex items-center gap-1 rounded-lg border border-gold/30 bg-gold/10 px-2 py-1 text-[8px] font-bold text-gold disabled:opacity-35"
+              >
+                {interpretingKey === "team" ? <LoaderCircle size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                Understand now
+              </button>
+            </div>
+            <InstructionInterpretationView
+              text={tactics.teamInstructions ?? ""}
+              interpretation={teamInterpretation}
+              stale={Boolean(tactics.teamInstructions?.trim() && teamCached && !teamInterpretation)}
+              compact
+            />
+          </div>
+
           <div className="mt-4 rounded-xl border border-white/10 bg-card p-3">
             <div className="flex items-center justify-between">
               <span className="stat-label">Live Individual Instruction</span>
-              <span className="text-[9px] text-gold/70">interpreted on Apply</span>
+              <span className="text-[9px] text-gold/70">AI semantic plan</span>
             </div>
             <select value={instructionPlayerId} onChange={(e) => setInstructionPlayerId(e.target.value)}
               className="mt-2 w-full rounded-lg border border-white/10 bg-navy px-2 py-2 text-[10px]">
@@ -643,17 +843,40 @@ function LiveTacticsPanel({
                 </option>
               ))}
             </select>
-            <textarea value={instructionText[instructionPlayerId] ?? ""}
+            <textarea value={selectedInstructionText}
               onChange={(e) => onInstructionText((v) => ({ ...v, [instructionPlayerId]: e.target.value }))}
-              placeholder="Tell this player what to do…" rows={2} maxLength={300}
+              placeholder="Tell this player what you mean in any wording…" rows={2} maxLength={600}
               className="mt-2 w-full resize-none rounded-lg border border-white/10 bg-navy p-2 text-[10px] leading-relaxed outline-none focus:border-gold" />
-            <div className="mt-2 flex flex-wrap gap-1">
-              {summarizeDirectives(parseInstructions(instructionText[instructionPlayerId] ?? "")).map((label) => (
-                <span key={label} className="rounded-full bg-gold/10 px-1.5 py-1 text-[8px] font-semibold text-gold">{label}</span>
-              ))}
+            <div className="mt-1 flex justify-end">
+              <button
+                type="button"
+                disabled={!selectedInstructionText.trim() || interpreting || interpretingKey !== null}
+                onClick={() => void interpretNow({
+                  key: `player:${instructionPlayerId}`,
+                  text: selectedInstructionText,
+                  scope: "player",
+                  subjectPlayerId: instructionPlayerId,
+                }, instructionPlayerId)}
+                className="flex items-center gap-1 rounded-lg border border-gold/30 bg-gold/10 px-2 py-1 text-[8px] font-bold text-gold disabled:opacity-35"
+              >
+                {interpretingKey === instructionPlayerId ? <LoaderCircle size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                Understand now
+              </button>
             </div>
+            <InstructionInterpretationView
+              text={selectedInstructionText}
+              interpretation={selectedInterpretation}
+              stale={Boolean(selectedInstructionText.trim() && selectedCached && !selectedInterpretation)}
+              compact
+            />
             <p className="mt-2 text-[9px] text-white/30">Live edits last for this match. Use the Tactics page to save them permanently.</p>
           </div>
+
+          {(localWarning || interpretWarning) && (
+            <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/10 p-2 text-[9px] leading-relaxed text-amber-200">
+              Cloud AI unavailable: {localWarning ?? interpretWarning}. A visibly marked basic fallback was used.
+            </div>
+          )}
 
           <div className="mt-4 rounded-xl border border-white/10 bg-card p-3">
             <div className="flex items-center justify-between"><span className="stat-label">Substitution</span><span className="text-[9px] text-white/30">up to 5</span></div>
@@ -674,8 +897,14 @@ function LiveTacticsPanel({
 
         <footer className="flex shrink-0 gap-2 border-t border-white/10 bg-panel p-3">
           <button onClick={onClose} className="btn-dark flex-1 py-2 text-xs">Cancel</button>
-          <button onClick={onApply} className="btn-gold flex flex-1 items-center justify-center gap-2 py-2 text-xs">
-            <Check size={15} /> Apply &amp; {atHalfTime ? "Return" : "Resume"}
+          <button
+            disabled={interpreting || interpretingKey !== null}
+            onClick={onApply}
+            className="btn-gold flex flex-1 items-center justify-center gap-2 py-2 text-xs disabled:opacity-60"
+          >
+            {interpreting
+              ? <><LoaderCircle size={15} className="animate-spin" /> Understanding…</>
+              : <><Check size={15} /> Apply &amp; {atHalfTime ? "Return" : "Resume"}</>}
           </button>
         </footer>
       </section>
