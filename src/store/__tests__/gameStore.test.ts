@@ -130,4 +130,98 @@ describe("core game loop (integration)", () => {
     const r2 = store().advanceWeek();
     expect(["match", "none", "seasonEnd"]).toContain(r2.type);
   }, 30_000);
+
+  it("plays a full 42-week season through to rollover", async () => {
+    const league = LEAGUES_DATA.find((l) => l.nation === "Bretherland" && l.tier === 1)!;
+    const leagueId = slugify(league.name);
+    const champId = slugify(
+      LEAGUES_DATA.find((l) => l.nation === "Bretherland" && l.tier === 2)!.name,
+    );
+    const clubId = slugify(league.clubs[0]);
+
+    await useGameStore.getState().newCareer({
+      managerName: "Season Tester",
+      managerNationality: "Bretherland",
+      difficulty: Difficulty.Amateur,
+      leagueId,
+      clubId,
+    });
+
+    const store = () => useGameStore.getState();
+
+    // capture pre-rollover state
+    const youthBase = Object.keys(store().save!.world.players).length;
+    const bretherlandUnion = new Set([
+      ...store().save!.world.leagues[leagueId].clubIds,
+      ...store().save!.world.leagues[champId].clubIds,
+    ]);
+    expect(bretherlandUnion.size).toBe(40);
+    const samplePlayerId = store().save!.world.clubs[clubId].playerIds[0];
+    const sampleAgeBefore = store().save!.world.players[samplePlayerId].age;
+
+    const buildResult = (fixtureId: string): MatchResult => {
+      const s = store().save!;
+      const fixture = s.world.fixtures[fixtureId];
+      const ratings: Record<string, number> = {};
+      for (const pid of s.world.clubs[s.userClubId].playerIds) ratings[pid] = 7;
+      return {
+        fixtureId,
+        homeClubId: fixture.homeClubId,
+        awayClubId: fixture.awayClubId,
+        homeGoals: 1,
+        awayGoals: 1,
+        stats: emptyStats(),
+        ratings,
+        events: [],
+      };
+    };
+
+    let guard = 0;
+    let seasonEnd = false;
+    let r = store().advanceWeek();
+    while (guard++ < 400) {
+      if (r.type === "match") r = store().recordUserMatch(buildResult(r.fixtureId));
+      else if (r.type === "seasonEnd") {
+        seasonEnd = true;
+        break;
+      } else r = store().advanceWeek();
+    }
+    expect(seasonEnd, `loop guard hit with week=${store().save!.season.currentWeek}`).toBe(true);
+    expect(guard).toBeLessThan(400);
+
+    const after = store().save!;
+    expect(after.season.seasonYear).toBe(2027);
+    expect(after.season.currentWeek).toBe(1);
+    expect(after.season.transferWindowOpen).toBe(true);
+
+    // new fixtures generated: 380 fresh league games, none played
+    const newLeague = Object.values(after.world.fixtures).filter(
+      (f) => f.competitionId === leagueId,
+    );
+    expect(newLeague).toHaveLength(380);
+    expect(newLeague.every((f) => !f.played)).toBe(true);
+
+    // fresh cup + continental
+    expect(after.cup).toBeTruthy();
+    expect(after.continental?.groups).toHaveLength(8);
+    expect(after.continental?.koRound).toBe(1);
+    expect(
+      Object.values(after.world.fixtures).filter((f) => f.competitionId === "cup").length,
+    ).toBe(4); // fresh cup R1: 8 unseeded clubs → 4 matches
+
+    // promotion/relegation shuffled clubs between tiers but kept the nation at 40
+    const unionAfter = new Set([
+      ...after.world.leagues[leagueId].clubIds,
+      ...after.world.leagues[champId].clubIds,
+    ]);
+    expect(unionAfter.size).toBe(40);
+    expect(unionAfter).toEqual(bretherlandUnion);
+
+    // youth intake: +2 per club
+    expect(Object.keys(after.world.players).length).toBe(youthBase + 800);
+
+    // aging + stat reset
+    expect(after.world.players[samplePlayerId].age).toBe(sampleAgeBefore + 1);
+    expect(after.world.players[samplePlayerId].seasonStats.appearances).toBe(0);
+  }, 120_000);
 });
