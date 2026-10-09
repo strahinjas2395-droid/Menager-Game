@@ -92,23 +92,32 @@ export function resolveShot(
   pressure: number,
   rng: SeededRNG,
 ): ShotResult {
-  const score =
-    shooter.finishing * 3 +
-    shooter.composure * 2 -
-    distance * 2 -
-    angle * 3 -
-    gk.reflexes * 2 -
-    gk.shotStopping * 2 -
-    pressure * 10;
+  const isLongRange = distance > 20;
+  const score = isLongRange
+    ? shooter.longShots * 2.8 + shooter.technique * 1.1 + shooter.composure * 1.2 +
+      shooter.finishing * 0.35 - distance * 1.25 - gk.reflexes * 1.25 -
+      gk.shotStopping * 1.25 - pressure * 12 - angle * 8
+    : shooter.finishing * 3 + shooter.composure * 2 - distance * 2 - angle * 3 -
+      gk.reflexes * 2 - gk.shotStopping * 2 - pressure * 10;
 
-  const goalProb = clamp(21 + score * 0.8, 2, 70);
+  // Long-range goals are rare but specialists have a meaningful advantage.
+  const goalProb = isLongRange
+    ? clamp(5 + score * 0.3, 1, 22)
+    : clamp(21 + score * 0.8, 2, 70);
   if (rng.chance(goalProb / 100)) {
     return { goal: true, saved: false, blocked: false, wide: false };
   }
 
   // Split the misses: blocked if under pressure, wide if angle/distance poor
   const blockP = clamp(14 + pressure * 25 + (angle > 0.6 ? 6 : 0), 5, 45);
-  const wideP = clamp(10 + angle * 30 + (distance > 25 ? 14 : 0) - gk.communication * 0.3, 5, 50);
+  const longAccuracy = isLongRange
+    ? (shooter.longShots - 10) * 1.1 + (shooter.technique - 10) * 0.55
+    : 0;
+  const wideP = clamp(
+    10 + angle * 30 + (distance > 25 ? 14 : 0) - gk.communication * 0.3 - longAccuracy,
+    5,
+    58,
+  );
   const r = rng.float(0, 100);
   if (r < blockP) return { goal: false, saved: false, blocked: true, wide: false };
   if (r < blockP + wideP) return { goal: false, saved: false, blocked: false, wide: true };

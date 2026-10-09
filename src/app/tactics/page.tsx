@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Save, Sparkles } from "lucide-react";
+import { Save, Sparkles, X } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import TopBar from "@/components/TopBar";
 import StepDots from "@/components/StepDots";
 import { useGameStore } from "@/store/gameStore";
-import { selectBestXI } from "@/engine/matchSimulator";
+import { assignTacticalNumbers, selectBestXI } from "@/engine/matchSimulator";
 import { FORMATION_NAMES } from "@/engine/formations";
 import { parseInstructions, summarizeDirectives } from "@/engine/directives";
 import {
@@ -31,7 +31,7 @@ const STYLE_HELP: Record<PlayStyle, string> = {
 
 const INSTRUCTION_EXAMPLES = [
   "Hold your position and keep passes short",
-  "Make runs in behind and shoot from distance",
+  "Make runs in behind and take more shots from outside the box",
   "Stay wide, take on defenders and whip early crosses",
   "Cut inside, roam freely and play through balls",
   "Act as a target man, hold up the ball and lay it off",
@@ -70,6 +70,9 @@ export default function TacticsPage() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const pitchRef = useRef<HTMLDivElement>(null);
   const dragIdx = useRef<number | null>(null);
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
+  const dragMoved = useRef(false);
+  const [playerCardId, setPlayerCardId] = useState<string | null>(null);
   const [pitchW, setPitchW] = useState(0);
 
   useEffect(() => {
@@ -83,7 +86,8 @@ export default function TacticsPage() {
     const fit = () => {
       const w = el.clientWidth;
       const h = el.clientHeight;
-      if (w > 0 && h > 0) setPitchW(Math.max(220, Math.floor(Math.min(w, h * (1000 / 650)))));
+      // Vertical board: 650 wide × 1000 high (home goal at the bottom).
+      if (w > 0 && h > 0) setPitchW(Math.max(110, Math.floor(Math.min(w, h * (650 / 1000)))));
     };
     fit();
     const ro = new ResizeObserver(fit);
@@ -109,6 +113,7 @@ export default function TacticsPage() {
     () => (draft && squad.length ? selectBestXI(squad, draft.formation) : null),
     [draft, squad],
   );
+  const tacticalNumbers = useMemo(() => assignTacticalNumbers(xi?.roles ?? []), [xi]);
 
   if (!save || !draft || !xi) {
     return (
@@ -144,20 +149,26 @@ export default function TacticsPage() {
   const toPitchCoords = (clientX: number, clientY: number) => {
     const rect = pitchRef.current?.getBoundingClientRect();
     if (!rect) return null;
-    const x = ((clientX - rect.left) / rect.width) * 1000;
-    const y = ((clientY - rect.top) / rect.height) * 650;
+    // Display is rotated: pitch width = engine Y, top-to-bottom = 1000-X.
+    const y = ((clientX - rect.left) / rect.width) * 650;
+    const x = (1 - (clientY - rect.top) / rect.height) * 1000;
     if (x < 10 || x > 990 || y < 10 || y > 640) return null;
     return { x: Math.round(x), y: Math.round(y) };
   };
 
   const onPointerDown = (i: number) => (e: React.PointerEvent) => {
     dragIdx.current = i;
+    pointerStart.current = { x: e.clientX, y: e.clientY };
+    dragMoved.current = false;
     setSelectedPlayerId(xi.starters[i]?.id ?? null);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     e.preventDefault();
   };
   const onPointerMove = (e: React.PointerEvent) => {
     if (dragIdx.current === null) return;
+    const start = pointerStart.current;
+    if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 6) dragMoved.current = true;
+    if (!dragMoved.current) return;
     const c = toPitchCoords(e.clientX, e.clientY);
     if (!c) return;
     const player = xi.starters[dragIdx.current];
@@ -167,7 +178,16 @@ export default function TacticsPage() {
     );
   };
   const onPointerUp = () => {
+    const i = dragIdx.current;
+    if (i !== null && !dragMoved.current) setPlayerCardId(xi.starters[i]?.id ?? null);
     dragIdx.current = null;
+    pointerStart.current = null;
+    dragMoved.current = false;
+  };
+  const onPointerCancel = () => {
+    dragIdx.current = null;
+    pointerStart.current = null;
+    dragMoved.current = false;
   };
 
   const saveTactics = async () => {
@@ -182,70 +202,93 @@ export default function TacticsPage() {
   const selectedPlayer = squad.find((p) => p.id === selectedPlayerId) ?? squad[0];
   const selectedText = selectedPlayer ? instructionDraft[selectedPlayer.id] ?? "" : "";
   const understood = summarizeDirectives(parseInstructions(selectedText));
+  const playerCard = playerCardId ? xi.starters.find((p) => p.id === playerCardId) ?? null : null;
+  const playerCardIdx = playerCard ? xi.starters.findIndex((p) => p.id === playerCard.id) : -1;
 
   return (
     <main className="flex h-full flex-col bg-navy">
       <TopBar budget={false} />
 
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        {/* ---------- PITCH (always visible) ---------- */}
-        <div className="flex h-[34vh] shrink-0 flex-col border-b border-white/10 lg:h-auto lg:w-[46%] lg:max-w-[600px] lg:border-b-0 lg:border-r">
-          <div ref={wrapRef} className="flex min-h-0 flex-1 items-center justify-center p-3">
+      <div className="flex min-h-0 flex-1 flex-row">
+        {/* ---------- VERTICAL PITCH (home goal bottom, attack upward) ---------- */}
+        <div className="flex w-[48%] min-w-[150px] max-w-[400px] shrink-0 flex-col border-r border-white/10 sm:w-[42%]">
+          <div ref={wrapRef} className="flex min-h-0 flex-1 items-center justify-center p-1.5 sm:p-3">
             <div
               ref={pitchRef}
-              className="relative touch-none overflow-hidden rounded-xl border border-white/15 shadow-lg"
+              className="relative touch-none overflow-hidden rounded-xl border border-white/20 shadow-xl"
               style={{
                 width: pitchW || "100%",
-                aspectRatio: "1000 / 650",
+                aspectRatio: "650 / 1000",
                 background:
-                  "repeating-linear-gradient(90deg, #2E7D32 0%, #2E7D32 10%, #317F35 10%, #317F35 20%)",
+                  "repeating-linear-gradient(0deg, #2E7D32 0%, #2E7D32 10%, #317F35 10%, #317F35 20%)",
               }}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
-              onPointerLeave={onPointerUp}
+              onPointerCancel={onPointerCancel}
+              onPointerLeave={(e) => {
+                if (e.buttons === 0) onPointerCancel();
+              }}
             >
-              {/* press zone */}
+              <span className="pointer-events-none absolute left-1/2 top-1 z-20 -translate-x-1/2 text-[7px] font-black tracking-[0.18em] text-white/40">
+                ATTACK ↑
+              </span>
+
+              {/* pressing territory, rotated from engine X into vertical Y */}
               {Number(draft.pressing) > 0 && (
                 <div
-                  className="pointer-events-none absolute inset-y-0 bg-gold/10"
-                  style={{ left: `${pressFrom / 10}%`, width: `${(pressTo - pressFrom) / 10}%` }}
+                  className="pointer-events-none absolute inset-x-0 bg-gold/10"
+                  style={{ top: `${100 - pressTo / 10}%`, height: `${(pressTo - pressFrom) / 10}%` }}
                 >
-                  <div className="absolute inset-y-0 right-0 w-px border-r border-dashed border-gold/60" />
+                  <div className="absolute inset-x-0 top-0 border-t border-dashed border-gold/65" />
                 </div>
               )}
 
-              {/* pitch markings */}
+              {/* full vertical pitch markings */}
               <div className="pointer-events-none absolute inset-0">
-                <div className="absolute inset-y-0 left-1/2 w-px bg-white/50" />
-                <div className="absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/50" />
-                <div className="absolute inset-y-[19%] left-0 w-[16.5%] border border-white/50" />
-                <div className="absolute inset-y-[19%] right-0 w-[16.5%] border border-white/50" />
-                <div className="absolute inset-y-[31%] left-0 w-[5.5%] border border-white/50" />
-                <div className="absolute inset-y-[31%] right-0 w-[5.5%] border border-white/50" />
-                {/* offside trap line */}
+                <div className="absolute inset-x-0 top-1/2 h-px bg-white/55" />
+                <div className="absolute left-1/2 top-1/2 h-[12%] aspect-square -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/55" />
+                <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/70" />
+
+                {/* opponent penalty / goal areas */}
+                <div className="absolute left-[19.1%] top-0 h-[16.5%] w-[61.8%] border border-white/55" />
+                <div className="absolute left-[36%] top-0 h-[5.5%] w-[28%] border border-white/55" />
+                <span className="absolute left-1/2 top-[11%] h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/70" />
+                {/* visible goal/net (drawn inside so clipping cannot hide it) */}
+                <div className="absolute left-[43.5%] top-0 h-[2.5%] w-[13%] border-x-2 border-b-2 border-white/90 bg-white/15 shadow-[inset_0_0_0_1px_rgba(255,255,255,.18)]" />
+
+                {/* own penalty / goal areas */}
+                <div className="absolute bottom-0 left-[19.1%] h-[16.5%] w-[61.8%] border border-white/55" />
+                <div className="absolute bottom-0 left-[36%] h-[5.5%] w-[28%] border border-white/55" />
+                <span className="absolute bottom-[11%] left-1/2 h-1 w-1 -translate-x-1/2 translate-y-1/2 rounded-full bg-white/70" />
+                <div className="absolute bottom-0 left-[43.5%] h-[2.5%] w-[13%] border-x-2 border-t-2 border-white/90 bg-white/15 shadow-[inset_0_0_0_1px_rgba(255,255,255,.18)]" />
+
                 {draft.offsideTrap && (
                   <div
-                    className="absolute inset-y-0 border-l-2 border-dashed border-amber-300/80"
-                    style={{ left: `${(300 + lineShift) / 10}%` }}
+                    className="absolute inset-x-0 border-t-2 border-dashed border-amber-300/85"
+                    style={{ top: `${100 - (300 + lineShift) / 10}%` }}
                   />
                 )}
               </div>
 
-              {/* formation dots */}
+              {/* formation dots: engine Y → horizontal, engine X → bottom-to-top */}
               {xi.starters.map((p, i) => {
                 const pos = displayPos(i);
                 const dragPos = draft.positionOverrides[p.id];
                 const isGK = p.primaryPosition === "GK";
+                const number = tacticalNumbers[i] ?? p.shirtNumber;
                 return (
                   <div
                     key={p.id}
                     onPointerDown={onPointerDown(i)}
                     className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-grab select-none rounded-full active:cursor-grabbing ${selectedPlayerId === p.id ? "ring-2 ring-gold/80 ring-offset-2 ring-offset-transparent" : ""}`}
-                    style={{ left: `${pos.x / 10}%`, top: `${(pos.y / 650) * 100}%` }}
-                    title={`${p.firstName} ${p.lastName} — drag to fix position`}
+                    style={{
+                      left: `${Math.min(94, Math.max(6, (pos.y / 650) * 100))}%`,
+                      top: `${Math.min(96, Math.max(4, 100 - pos.x / 10))}%`,
+                    }}
+                    title={`${p.firstName} ${p.lastName} · #${number} ${xi.roles[i]} · tap for stats, drag to move`}
                   >
                     <span
-                      className={`flex h-6 w-6 items-center justify-center rounded-full border-2 text-[9px] font-black shadow-md ${
+                      className={`flex h-5 w-5 items-center justify-center rounded-full border-2 text-[8px] font-black shadow-md sm:h-7 sm:w-7 sm:text-[10px] ${
                         isGK
                           ? "border-yellow-300 bg-navy text-yellow-300"
                           : dragPos
@@ -253,9 +296,9 @@ export default function TacticsPage() {
                             : "border-white/85 bg-card text-white"
                       }`}
                     >
-                      {p.shirtNumber}
+                      {number}
                     </span>
-                    <span className="mt-0.5 block max-w-14 truncate text-center text-[8px] font-semibold text-white/90 drop-shadow">
+                    <span className="mt-0.5 hidden max-w-14 truncate text-center text-[7px] font-semibold text-white/90 drop-shadow sm:block">
                       {p.lastName}
                     </span>
                   </div>
@@ -263,14 +306,13 @@ export default function TacticsPage() {
               })}
             </div>
           </div>
-          <p className="px-3 pb-2 text-center text-[9px] text-white/40">
-            {draft.formation} · drag dots to fix a position · gold zone = press
-            {draft.offsideTrap ? " · dashed = offside line" : ""}
+          <p className="px-1.5 pb-2 text-center text-[8px] leading-tight text-white/40 sm:px-3 sm:text-[9px]">
+            Tap = stats · drag = position<br />{draft.formation} · gold = press zone
           </p>
         </div>
 
         {/* ---------- SETTINGS (side panel, own scroll) ---------- */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 pb-28">
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3 pb-28 sm:px-4">
           <div className="mb-3 flex items-center justify-between">
             <h1 className="text-lg font-bold">Tactics</h1>
             <select
@@ -382,7 +424,7 @@ export default function TacticsPage() {
               className="mt-3 w-full rounded-lg border border-white/10 bg-navy px-3 py-2 text-xs font-semibold outline-none focus:border-gold"
             >
               {xi.starters.map((p, i) => (
-                <option key={p.id} value={p.id}>XI · {xi.roles[i]} · #{p.shirtNumber} {p.firstName} {p.lastName}</option>
+                <option key={p.id} value={p.id}>XI · {xi.roles[i]} · #{tacticalNumbers[i] ?? p.shirtNumber} {p.firstName} {p.lastName}</option>
               ))}
               {xi.bench.map((p) => (
                 <option key={p.id} value={p.id}>Bench · {p.primaryPosition} · #{p.shirtNumber} {p.firstName} {p.lastName}</option>
@@ -448,6 +490,15 @@ export default function TacticsPage() {
         </div>
       </div>
 
+      {playerCard && (
+        <PlayerStatsPopup
+          player={playerCard}
+          role={xi.roles[playerCardIdx] ?? playerCard.primaryPosition}
+          number={tacticalNumbers[playerCardIdx] ?? playerCard.shirtNumber}
+          onClose={() => setPlayerCardId(null)}
+        />
+      )}
+
       <div className="fixed inset-x-0 bottom-14 z-30 mx-auto max-w-lg px-4 pb-2">
         <button onClick={() => void saveTactics()} className="btn-gold flex w-full items-center justify-center gap-2">
           {saved ? "Saved ✓" : (<><Save size={16} /> Save Tactics</>)}
@@ -457,6 +508,80 @@ export default function TacticsPage() {
       <BottomNav />
     </main>
   );
+}
+
+function PlayerStatsPopup({
+  player, role, number, onClose,
+}: { player: Player; role: string; number: number; onClose: () => void }) {
+  const groups: { title: string; stats: [string, number][] }[] = [
+    {
+      title: "Technical",
+      stats: [
+        ["Control", player.ballControl], ["Short pass", player.shortPassing],
+        ["Long pass", player.longPassing], ["Dribbling", player.dribbling],
+        ["Finishing", player.finishing], ["Long shots", player.longShots],
+        ["Crossing", player.crossing], ["Tackling", player.tackling],
+      ],
+    },
+    {
+      title: "Mental",
+      stats: [
+        ["Decisions", player.decisions], ["Creativity", player.creativity],
+        ["Composure", player.composure], ["Anticipation", player.anticipation],
+        ["Positioning", player.positioning], ["Off the ball", player.offTheBall],
+      ],
+    },
+    {
+      title: "Physical",
+      stats: [
+        ["Pace", player.pace], ["Acceleration", player.acceleration],
+        ["Strength", player.strength], ["Agility", player.agility],
+        ["Balance", player.balance], ["Jumping", player.jumping],
+      ],
+    },
+  ];
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-3" onPointerDown={onClose}>
+      <section className="max-h-[88vh] w-full max-w-sm overflow-y-auto rounded-2xl border border-gold/35 bg-navy shadow-2xl" onPointerDown={(e) => e.stopPropagation()}>
+        <header className="sticky top-0 z-10 flex items-start justify-between border-b border-white/10 bg-panel px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-gold bg-card text-lg font-black text-gold">{number}</span>
+            <div>
+              <h2 className="font-black">{player.firstName} {player.lastName}</h2>
+              <p className="text-[10px] font-semibold text-gold">{role} · {player.primaryPosition}</p>
+              <p className="mt-0.5 text-[9px] text-white/40">{player.age} yrs · {player.height} cm · {player.preferredFoot} foot</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" aria-label="Close player stats"><X size={18} /></button>
+        </header>
+        <div className="space-y-4 p-4">
+          {groups.map((group) => (
+            <div key={group.title}>
+              <div className="stat-label mb-2">{group.title}</div>
+              <div className="grid grid-cols-2 gap-x-5 gap-y-1.5">
+                {group.stats.map(([label, value]) => (
+                  <div key={label} className="flex items-center justify-between border-b border-white/5 pb-1 text-[11px]">
+                    <span className="text-white/55">{label}</span>
+                    <span className={`font-black tabular-nums ${statColor(value)}`}>{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <p className="rounded-lg bg-card px-3 py-2 text-[9px] leading-relaxed text-white/40">
+            Tactical number #{number} identifies this role on the board and during the match. It does not change the player&apos;s registered squad number.
+          </p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function statColor(value: number): string {
+  if (value >= 16) return "text-emerald-400";
+  if (value >= 13) return "text-gold";
+  if (value >= 9) return "text-white/80";
+  return "text-red-400";
 }
 
 function prettyStyle(style: PlayStyle): string {

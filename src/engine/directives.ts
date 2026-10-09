@@ -42,7 +42,7 @@ const LEXICON: LexEntry[] = [
   { re: /\b(stay wide|hold (your |the )?(touchline|width|wing)|hug (the )?(touchline|line|wing)|keep (your )?width|stick to the flank)\b/i, key: "stayWide" },
   { re: /\b(cut inside|come inside|invert|tuck in)\b/i, key: "cutInside" },
   // ---- on the ball ----
-  { re: /\b(shoot (on sight|from distance|from range)|long shots?|let one (fly|rip)|have a pop|shoot when you see the sight)\b/i, key: "shootFromDistance" },
+  { re: /\b(shoot (on sight|from distance|from range|more|more often)|take more shots?|more shots?|long shots?|let one (fly|rip)|have a pop|shoot when you see the sight)\b/i, key: "shootFromDistance" },
   { re: /\b(dribble more|take on|run at (them|defenders|players)|beat (the )?defenders|carry (it|the ball) forward)\b/i, key: "dribbleMore" },
   { re: /\b(dribble less|keep it simple|release (it|the ball) early|no dribbling|circulate (it|the ball)|don'?t dribble|do not dribble)\b/i, key: "dribbleLess", noFlip: true },
   { re: /\b(through balls?|through ball|killer balls?|riskier passes|risk the pass|split the (defense|defence)|thread (it|them|the ball|passes)|try (the )?impossible passes?)\b/i, key: "riskyPasses" },

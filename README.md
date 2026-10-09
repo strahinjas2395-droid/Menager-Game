@@ -16,7 +16,7 @@ Other scripts:
 
 ```bash
 npm run typecheck  # tsc --noEmit
-npm test           # vitest (49 specs)
+npm test           # vitest (54 specs)
 npm run build      # production build
 ```
 
@@ -33,10 +33,12 @@ npm run build      # production build
   style, team instructions, individual instructions and substitutions without restarting.
 - **Tactical simulation**: distinct build-up, settled attack, defensive-block, counterattack
   and counter-press phases; role/formation-aware movement; short combinations, recycling,
-  switches, through balls, target-man play, overlaps, crosses and cutbacks; variable ball
-  speeds; aerial, shielding, tackling and loose-ball duels driven by player attributes.
-- **Tactics setup**: 32 formations, draggable pitch positions, dot-based team instructions,
-  set-piece takers, captain, plus persistent free-text instructions for every player. A
+  switches, through balls, target-man play, overlaps, crosses and cutbacks; contextual
+  long shots and variable ball speeds; explicit air-ball/shadow cues; aerial, shielding,
+  tackling and loose-ball duels driven by player attributes.
+- **Tactics setup**: 32 formations on a space-efficient vertical board, draggable pitch
+  positions, traditional role numbers, tap-to-view player stat cards, dot-based team
+  instructions, set-piece takers, captain, and persistent free-text instructions. A
   deterministic tactical interpreter displays what it understood and feeds those directives
   into each player's movement and decisions.
 - **Transfers**: scouting search, bid/counter negotiation, contract demands, and an AI

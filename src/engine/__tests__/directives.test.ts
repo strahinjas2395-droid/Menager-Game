@@ -5,7 +5,7 @@ import type { Player } from "@/types";
 describe("individual-instruction tactical interpreter", () => {
   it("translates natural attacking instructions into structured decisions", () => {
     const d = parseInstructions(
-      "Stay wide, take on defenders and whip early crosses. Make runs in behind and shoot from distance.",
+      "Stay wide, take on defenders and whip early crosses. Make runs in behind and take more shots from outside the box.",
     );
     expect(d).toMatchObject({
       stayWide: true,

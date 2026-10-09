@@ -321,9 +321,14 @@ function MatchScreen() {
             sceneRef={sceneRef}
             homeColor={homeClub.primaryColor}
             awayColor={awayClub.primaryColor}
-            homeNumbers={ctx.home.starters.map((p) => p.shirtNumber)}
-            awayNumbers={ctx.away.starters.map((p) => p.shirtNumber)}
+            homeNumbers={ctx.home.displayNumbers}
+            awayNumbers={ctx.away.displayNumbers}
           />
+          {snapshot?.ball.airborne && (
+            <div className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full border border-gold/60 bg-navy/90 px-2.5 py-1 text-[9px] font-black tracking-widest text-gold shadow-lg">
+              ↑ AIR BALL
+            </div>
+          )}
           {paused && !halfTime && !fullTime && !showTactics && (
             <div className="absolute inset-2 flex items-center justify-center rounded-lg bg-black/40">
               <span className="rounded-full bg-black/70 px-4 py-2 text-sm font-bold">PAUSED</span>
@@ -437,8 +442,8 @@ function MatchScreen() {
                   onChange={(e) => setPendingSub((s) => ({ ...s, off: Number(e.target.value), dirty: true }))}
                   className="rounded-lg border border-white/10 bg-navy px-2 py-1.5"
                 >
-                  {(ctx.home.isUserTeam ? ctx.home.starters : ctx.away.starters).map((p, i) => (
-                    <option key={p.id} value={i}>#{p.shirtNumber} {p.lastName} (off)</option>
+                  {(ctx.home.isUserTeam ? snapshot?.homeLineup ?? [] : snapshot?.awayLineup ?? []).map((p, i) => (
+                    <option key={p.playerId} value={i}>#{p.shirtNumber} {p.name} (off)</option>
                   ))}
                 </select>
                 <select
@@ -632,7 +637,11 @@ function LiveTacticsPanel({
             </div>
             <select value={instructionPlayerId} onChange={(e) => setInstructionPlayerId(e.target.value)}
               className="mt-2 w-full rounded-lg border border-white/10 bg-navy px-2 py-2 text-[10px]">
-              {instructionPlayers.map((p) => <option key={p.id} value={p.id}>#{p.shirtNumber} {p.firstName} {p.lastName} · {p.primaryPosition}</option>)}
+              {instructionPlayers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  #{currentLineup.find((line) => line.playerId === p.id)?.shirtNumber ?? p.shirtNumber} {p.firstName} {p.lastName} · {p.primaryPosition}
+                </option>
+              ))}
             </select>
             <textarea value={instructionText[instructionPlayerId] ?? ""}
               onChange={(e) => onInstructionText((v) => ({ ...v, [instructionPlayerId]: e.target.value }))}

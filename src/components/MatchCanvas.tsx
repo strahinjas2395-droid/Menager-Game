@@ -18,6 +18,8 @@ export class MatchScene {
   private homeDots: import("phaser").GameObjects.Container[] = [];
   private awayDots: import("phaser").GameObjects.Container[] = [];
   private ball: import("phaser").GameObjects.Arc | null = null;
+  private ballShadow: import("phaser").GameObjects.Ellipse | null = null;
+  private airBadge: import("phaser").GameObjects.Text | null = null;
   private gameRef: import("phaser").Game | null = null;
 
   create(
@@ -32,10 +34,21 @@ export class MatchScene {
     this.homeDots = numbers.home.map((n, i) => this.makeDot(scene, colors.home, n, true, i));
     this.awayDots = numbers.away.map((n, i) => this.makeDot(scene, colors.away, n, false, i));
 
+    this.ballShadow = scene.add
+      .ellipse((PITCH_W / 2) * R, (PITCH_H / 2) * R + 5, 25, 12, 0x000000, 0.34)
+      .setDepth(9);
     this.ball = scene.add
       .circle((PITCH_W / 2) * R, (PITCH_H / 2) * R, 11, 0xffffff)
-      .setDepth(10);
+      .setDepth(11);
     this.ball.setStrokeStyle(3, 0x222222, 0.9);
+    this.airBadge = scene.add.text((PITCH_W / 2) * R, (PITCH_H / 2) * R - 28, "AIR", {
+      fontFamily: "Arial, Helvetica, sans-serif",
+      fontSize: "18px",
+      color: "#ffd166",
+      fontStyle: "bold",
+      stroke: "#111827",
+      strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(12).setVisible(false);
   }
 
   private makeDot(
@@ -136,20 +149,35 @@ export class MatchScene {
     corner(3, H - 3, -Math.PI / 2, 0);
     corner(W - 3, H - 3, Math.PI, Math.PI * 1.5);
 
-    // goals (73 wide, 24 deep)
-    g.fillStyle(0xffffff, 0.3);
-    g.fillRect(-s(24), s(325 - 37), s(24), s(74));
-    g.fillRect(W, s(325 - 37), s(24), s(74));
-    g.lineStyle(6, line, 0.95);
-    g.strokeRect(-s(24), s(325 - 37), s(24), s(74));
-    g.strokeRect(W, s(325 - 37), s(24), s(74));
+    // Goals/nets are drawn just inside the goal line. The earlier renderer
+    // placed them outside the canvas, where browser clipping made them vanish.
+    const goalY = s(325 - 37);
+    const goalH = s(74);
+    const goalD = s(24);
+    g.fillStyle(0xffffff, 0.13);
+    g.fillRect(3, goalY, goalD, goalH);
+    g.fillRect(W - goalD - 3, goalY, goalD, goalH);
+    g.lineStyle(6, line, 0.96);
+    g.strokeRect(3, goalY, goalD, goalH);
+    g.strokeRect(W - goalD - 3, goalY, goalD, goalH);
+    // net mesh
+    g.lineStyle(2, line, 0.34);
+    for (let n = 1; n < 4; n++) {
+      const gy = goalY + (goalH * n) / 4;
+      g.lineBetween(3, gy, goalD + 3, gy);
+      g.lineBetween(W - goalD - 3, gy, W - 3, gy);
+    }
+    for (let n = 1; n < 3; n++) {
+      g.lineBetween(3 + (goalD * n) / 3, goalY, 3 + (goalD * n) / 3, goalY + goalH);
+      g.lineBetween(W - goalD - 3 + (goalD * n) / 3, goalY, W - goalD - 3 + (goalD * n) / 3, goalY + goalH);
+    }
   }
 
   /** Smoothly tween all dots to their new positions (100ms). */
   updatePositions(
     home: { x: number; y: number }[],
     away: { x: number; y: number }[],
-    ballPos: { x: number; y: number },
+    ballPos: { x: number; y: number; height?: number; airborne?: boolean },
   ): void {
     if (!this.scene) return;
     const tween = (
@@ -171,14 +199,36 @@ export class MatchScene {
     away.forEach((p, i) => tween(this.awayDots[i], p));
     if (this.ball) {
       const scene = this.scene;
+      const height = Math.max(0, ballPos.height ?? 0);
+      const lift = Math.min(58, height * R * 0.42);
+      const scale = 1 + Math.min(0.38, height / 170);
       scene.tweens.killTweensOf(this.ball);
       scene.tweens.add({
         targets: this.ball,
         x: ballPos.x * R,
-        y: ballPos.y * R,
+        y: ballPos.y * R - lift,
+        scaleX: scale,
+        scaleY: scale,
         duration: 90,
         ease: "Linear",
       });
+      this.ball.setStrokeStyle(3, ballPos.airborne ? 0xf0a500 : 0x222222, 0.95);
+      if (this.ballShadow) {
+        scene.tweens.killTweensOf(this.ballShadow);
+        scene.tweens.add({
+          targets: this.ballShadow,
+          x: ballPos.x * R,
+          y: ballPos.y * R + 5,
+          alpha: Math.max(0.1, 0.34 - height / 280),
+          scaleX: 1 + Math.min(0.7, height / 90),
+          duration: 90,
+          ease: "Linear",
+        });
+      }
+      if (this.airBadge) {
+        this.airBadge.setVisible(Boolean(ballPos.airborne));
+        this.airBadge.setPosition(ballPos.x * R, ballPos.y * R - lift - 28);
+      }
     }
   }
 
@@ -189,6 +239,8 @@ export class MatchScene {
     this.homeDots = [];
     this.awayDots = [];
     this.ball = null;
+    this.ballShadow = null;
+    this.airBadge = null;
   }
 }
 

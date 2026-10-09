@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   MatchSimulator,
+  assignTacticalNumbers,
   buildTeamSide,
   selectBestXI,
+  shotDecisionProbability,
   type TeamSide,
 } from "@/engine/matchSimulator";
 import { SeededRNG } from "@/database/rng";
@@ -239,6 +241,73 @@ describe("MatchSimulator", () => {
     expect(sim.home.tactics.pressing).toBe(PressingIntensity.Extreme);
     expect(sim.home.roles.filter((r) => r === "ST")).toHaveLength(2);
     expect(sim.getState().gameTime).toBe(beforeTime); // tactical UI does not restart the match
+  });
+
+
+  it("uses stable, intuitive traditional numbers for formation roles", () => {
+    const { home } = setup(515);
+    const numbers = home.displayNumbers;
+    expect(numbers).toHaveLength(11);
+    expect(new Set(numbers).size).toBe(11);
+    expect(numbers[home.roles.indexOf("GK")]).toBe(1);
+    expect(numbers[home.roles.indexOf("RB")]).toBe(2);
+    expect(numbers[home.roles.indexOf("LB")]).toBe(3);
+    expect(numbers.filter((_, i) => home.roles[i] === "CB")).toEqual([4, 5]);
+    expect(numbers[home.roles.indexOf("RW")]).toBe(7);
+    expect(numbers[home.roles.indexOf("ST")]).toBe(9);
+    expect(numbers[home.roles.indexOf("LW")]).toBe(11);
+    expect(assignTacticalNumbers(["GK", "CB", "CB", "CAM", "ST"])).toEqual([1, 4, 5, 10, 9]);
+  });
+
+  it("shoot-more instruction raises sensible long shots but never halfway attempts", () => {
+    const { home } = setup(616);
+    const shooter = home.starters.find((p) => p.primaryPosition !== "GK")!;
+    const normal = shotDecisionProbability(
+      shooter, "CM", 30, MentalityLevel.Balanced, PlayStyle.Balanced, false,
+    );
+    const instructed = shotDecisionProbability(
+      shooter, "CM", 30, MentalityLevel.Balanced, PlayStyle.Balanced, true,
+    );
+    const halfway = shotDecisionProbability(
+      shooter, "CM", 48, MentalityLevel.UltraAttacking, PlayStyle.RouteOne, true,
+    );
+    expect(normal).toBeGreaterThan(0.04);
+    expect(instructed).toBeGreaterThan(normal * 1.5);
+    expect(halfway).toBeLessThanOrEqual(0.002);
+  });
+
+  it("publishes explicit airborne-ball state during lofted play", () => {
+    const { sim, home, away } = setup(717);
+    home.tactics.playStyle = PlayStyle.RouteOne;
+    away.tactics.playStyle = PlayStyle.LongBallDirect;
+    home.tactics.passingLength = TempoSetting.VeryFast;
+    away.tactics.passingLength = TempoSetting.VeryFast;
+    let sawAir = false;
+    let sawGround = false;
+    for (let i = 0; i < 4500 && sim.getState().phase !== "halftime"; i++) {
+      sim.tick(0.1);
+      const state = sim.getState();
+      if (state.phase === "flight") {
+        if (state.ball.airborne) sawAir = true;
+        else sawGround = true;
+      }
+      if (sawAir && sawGround) break;
+    }
+    expect(sawAir).toBe(true);
+    expect(sawGround).toBe(true);
+  });
+
+
+  it("takes some default shots from outside the box without an instruction", () => {
+    let rangedAttempts = 0;
+    for (const seed of [801, 802, 803]) {
+      const { sim } = setup(seed);
+      playFullMatch(sim);
+      rangedAttempts += sim.getEvents().filter(
+        (event) => event.type === "Chance" && event.text.includes("shoots from"),
+      ).length;
+    }
+    expect(rangedAttempts).toBeGreaterThan(0);
   });
 
 });

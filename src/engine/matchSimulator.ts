@@ -51,6 +51,8 @@ export interface TeamSide {
   bench: Player[];
   /** formation role per starter index */
   roles: string[];
+  /** traditional 1-11 positional number per starter index */
+  displayNumbers: number[];
   /** formation base position per starter index (already mirrored for away) */
   basePositions: { x: number; y: number }[];
   tactics: TacticalSetup;
@@ -88,6 +90,8 @@ interface SimPlayer {
   tx: number;
   ty: number;
   role: string;
+  /** tactical shirt number (1 keeper, 4/5 centre-backs, 10 creator, etc.) */
+  number: number;
   tackleCd: number;
   /** world-time until which this player bursts forward (give-and-go) */
   runUntil: number;
@@ -169,6 +173,70 @@ export function lineOf(role: string): "GK" | "DEF" | "MID" | "FWD" {
   return "MID";
 }
 
+/**
+ * Assign classic positional numbers while guaranteeing uniqueness in the XI.
+ * The numbers are visual/tactical identifiers, so changing formation updates
+ * them without mutating a player's registered squad number in the save.
+ */
+export function assignTacticalNumbers(roles: string[]): number[] {
+  const preferences: Record<string, number[]> = {
+    GK: [1],
+    RB: [2, 12], RWB: [2, 7, 12],
+    LB: [3, 13], LWB: [3, 11, 13],
+    CB: [4, 5, 6],
+    CDM: [6, 4, 8], DM: [6, 4, 8],
+    CM: [8, 6, 10],
+    CAM: [10, 8, 7], AM: [10, 8, 7],
+    RM: [7, 8, 11], RW: [7, 11, 10],
+    LM: [11, 7, 10], LW: [11, 7, 10],
+    ST: [9, 10, 11], CF: [10, 9, 11],
+  };
+  const used = new Set<number>();
+  return roles.map((role) => {
+    const choices = [...(preferences[role] ?? []), ...Array.from({ length: 18 }, (_, i) => i + 1)];
+    const number = choices.find((n) => !used.has(n)) ?? used.size + 1;
+    used.add(number);
+    return number;
+  });
+}
+
+/**
+ * Contextual willingness to shoot. Normal players will try credible efforts
+ * from 18–32m; "shoot more" raises that appetite out to 39m, never from the
+ * halfway line. Conversion is resolved separately from actual attributes.
+ */
+export function shotDecisionProbability(
+  player: Player,
+  role: string,
+  distanceM: number,
+  mentality: MentalityLevel,
+  style: PlayStyle,
+  shootMore: boolean,
+): number {
+  const longQuality = (player.longShots + player.technique + player.decisions) / 60;
+  let urge: number;
+  if (distanceM < 15) {
+    urge = 0.9;
+  } else if (distanceM < 23) {
+    urge = clamp(0.34 + (23 - distanceM) * 0.035 + (mentality - 3) * 0.04, 0.12, 0.82);
+  } else if (distanceM < 31) {
+    urge = clamp(0.065 + longQuality * 0.18 + (mentality - 3) * 0.018, 0.045, 0.28);
+  } else if (distanceM < 36) {
+    urge = clamp(0.012 + longQuality * 0.085 + (mentality - 3) * 0.01, 0.012, 0.13);
+  } else {
+    urge = 0.001;
+  }
+
+  if (shootMore && distanceM >= 18 && distanceM < 39) {
+    urge = Math.max(urge, 0.16 + longQuality * 0.31);
+  }
+  if (style === PlayStyle.TikiTaka || style === PlayStyle.PossessionBased) urge *= shootMore ? 0.92 : 0.78;
+  if (style === PlayStyle.LongBallDirect || style === PlayStyle.RouteOne) urge *= 1.1;
+  if ((role === "CB" || role === "CDM") && !shootMore) urge *= 0.42;
+  if (distanceM >= 39) urge = 0.001;
+  return clamp(urge, 0.001, 0.92);
+}
+
 interface SetPiece {
   kind: "throw" | "goalKick" | "corner" | "freeKick";
   side: Side;
@@ -183,7 +251,7 @@ export interface MatchSnapshot {
   homeScore: number;
   awayScore: number;
   phase: Phase;
-  ball: { x: number; y: number };
+  ball: { x: number; y: number; height: number; airborne: boolean };
   homePositions: { x: number; y: number }[];
   awayPositions: { x: number; y: number }[];
   possession: Side | "loose";
@@ -235,6 +303,7 @@ export class MatchSimulator {
   private homePlayers: SimPlayer[] = [];
   private awayPlayers: SimPlayer[] = [];
   private ball = { x: PITCH_W / 2, y: PITCH_H / 2 };
+  private ballHeight = 0;
   private carrier: { side: Side; i: number } | null = null;
   private lastTouchSide: Side = "home";
   private flight: Flight | null = null;
@@ -286,6 +355,7 @@ export class MatchSimulator {
       return {
         p, x: base.x, y: base.y, tx: base.x, ty: base.y,
         role: side.roles[i] ?? "CM",
+        number: side.displayNumbers[i] ?? p.shirtNumber,
         tackleCd: 0, runUntil: 0, energy: 1, rating: 6.5, sentOff: false, yellow: false,
         goals: 0, assists: 0,
       };
@@ -363,6 +433,8 @@ export class MatchSimulator {
       team.roles[i] = slot.role;
       team.basePositions[i] = base;
     });
+    // Keep match numbers stable after kickoff so the manager can always track
+    // the same player, even if their role changes with a formation switch.
     this.pendingState = true;
   }
 
@@ -503,7 +575,11 @@ export class MatchSimulator {
       homeScore: this.homeScore,
       awayScore: this.awayScore,
       phase: this.phase,
-      ball: { ...this.ball },
+      ball: {
+        ...this.ball,
+        height: this.ballHeight,
+        airborne: this.ballHeight > 7,
+      },
       homePositions: this.homePlayers.map((p) => ({ x: p.x, y: p.y })),
       awayPositions: this.awayPlayers.map((p) => ({ x: p.x, y: p.y })),
       possession: this.carrier
@@ -524,7 +600,7 @@ export class MatchSimulator {
   private lineup(players: SimPlayer[]): LineupEntry[] {
     return players.map((sp) => ({
       playerId: sp.p.id,
-      shirtNumber: sp.p.shirtNumber,
+      shirtNumber: sp.number,
       name: `${sp.p.firstName} ${sp.p.lastName}`,
       position: sp.p.primaryPosition,
       rating: Number(sp.rating.toFixed(1)),
@@ -593,6 +669,7 @@ export class MatchSimulator {
     this.setPiece = null;
     this.penaltyState = null;
     this.ball = { x: PITCH_W / 2, y: PITCH_H / 2 };
+    this.ballHeight = 0;
     this.resetShapes();
 
     const players = this.players(side);
@@ -992,32 +1069,29 @@ export class MatchSimulator {
     // greatly increase the trigger.
     if (wide && inFinalThird) {
       const crossBase =
-        style === PlayStyle.WingPlay ? 0.64 :
-        directive.earlyCross ? 0.72 :
-        ["RB", "LB", "RWB", "LWB", "RW", "LW", "RM", "LM"].includes(sp.role) ? 0.29 : 0.12;
-      const cutback = nearByline && this.rng.chance(0.58);
-      if (this.rng.chance(crossBase + sp.p.crossing * 0.009)) {
+        directive.earlyCross ? 0.5 :
+        style === PlayStyle.WingPlay ? 0.36 :
+        ["RB", "LB", "RWB", "LWB", "RW", "LW", "RM", "LM"].includes(sp.role) ? 0.14 : 0.045;
+      const cutback = nearByline && this.rng.chance(0.72);
+      if (this.rng.chance(crossBase + sp.p.crossing * 0.006)) {
         this.executeCross(side, sp, cutback);
         return;
       }
     }
 
-    // Shooting is contextual: forwards are more assertive, possession teams
-    // wait for cleaner chances, direct sides and "shoot on sight" accept range.
-    let shootUrge =
-      distToGoal < 15
-        ? 0.93
-        : distToGoal < 23
-          ? clamp(0.4 + (23 - distToGoal) * 0.035 + (ment - 3) * 0.045, 0.1, 0.87)
-          : distToGoal < 34
-            ? clamp(0.055 + sp.p.longShots * 0.011 + (ment - 3) * 0.025, 0.02, 0.31)
-            : 0.006;
-    if (style === PlayStyle.TikiTaka || style === PlayStyle.PossessionBased) shootUrge *= 0.74;
-    if (style === PlayStyle.LongBallDirect || style === PlayStyle.RouteOne) shootUrge *= 1.12;
-    if (directive.shootFromDistance && distToGoal < 38) shootUrge = Math.max(shootUrge, 0.34 + sp.p.longShots * 0.012);
-    if (sp.role === "CB" || sp.role === "CDM") shootUrge *= 0.45;
+    // Shooting is contextual. Everyone may attempt a credible effort outside
+    // the box; an explicit "shoot more" instruction raises frequency/range,
+    // but the hard 39m cap prevents absurd attempts from halfway.
+    const shootUrge = shotDecisionProbability(
+      sp.p,
+      sp.role,
+      distToGoal,
+      ment,
+      style,
+      Boolean(directive.shootFromDistance),
+    );
 
-    if (this.rng.chance(clamp(shootUrge, 0.002, 0.94))) {
+    if (this.rng.chance(shootUrge)) {
       this.executeShot(side, sp, distToGoal);
       return;
     }
@@ -1193,7 +1267,11 @@ export class MatchSimulator {
       const openness = this.nearestOpponentDist(side, mate.x, mate.y);
       const targetLine = lineOf(mate.role);
       const passerLine = lineOf(sp.role);
-      let flavor: PassFlavor = currentDistM > 31 ? "lofted" : "std";
+      const deliberateAerial =
+        currentDistM > 29 &&
+        (style === PlayStyle.RouteOne || style === PlayStyle.LongBallDirect ||
+          passerDirective.directPassing || (sp.role === "GK" && currentDistM > 40));
+      let flavor: PassFlavor = deliberateAerial ? "lofted" : currentDistM > 22 ? "driven" : "std";
       let tx = mate.x;
       let ty = mate.y;
       let risky = lane < 3.8;
@@ -1465,6 +1543,14 @@ export class MatchSimulator {
       if (outcome.goal || outcome.saved) this.stats.shotsOnTargetAway += 1;
     }
     this.bumpRating(sp, outcome.goal ? 0 : -0.03);
+    if (distM >= 20) {
+      this.pushEvent(
+        MatchEventType.Chance,
+        this.team(side).clubId,
+        sp.p.id,
+        `${sp.p.firstName} ${sp.p.lastName} shoots from ${Math.round(distM)} metres!`,
+      );
+    }
 
     // Where the ball ends up
     let toX: number;
@@ -1495,6 +1581,7 @@ export class MatchSimulator {
       dur: clamp(distM / this.rng.float(22, 32), 0.15, 1.8),
       side,
       shotOutcome: outcome,
+      passerId: sp.p.id,
     });
     this.lastTouchSide = side;
     this.possessionSide = side;
@@ -1502,6 +1589,7 @@ export class MatchSimulator {
 
   private launchFlight(f: Flight): void {
     this.flight = f;
+    this.ballHeight = 0;
     this.phase = "flight";
     this.carrier = null;
   }
@@ -1519,14 +1607,15 @@ export class MatchSimulator {
     f.t += dt;
     const t = clamp(f.t / f.dur, 0, 1);
     const arcH = f.arcH ?? (f.kind === "cross" ? 26 : f.kind === "shot" ? 8 : 0);
-    const arc = Math.sin(t * Math.PI) * arcH;
+    this.ballHeight = Math.sin(t * Math.PI) * arcH;
     this.ball.x = f.fromX + (f.toX - f.fromX) * t;
-    this.ball.y = f.fromY + (f.toY - f.fromY) * t - arc;
+    this.ball.y = f.fromY + (f.toY - f.fromY) * t;
 
     if (t < 1) return;
 
     const arrived = f;
     this.flight = null;
+    this.ballHeight = 0;
     switch (arrived.kind) {
       case "pass":
         this.resolvePassArrival(arrived);
@@ -1638,6 +1727,15 @@ export class MatchSimulator {
       return;
     }
     // wide
+    const shooter = f.passerId
+      ? this.players(attacking).find((p) => p.p.id === f.passerId)
+      : undefined;
+    this.pushEvent(
+      MatchEventType.ShotWide,
+      this.team(attacking).clubId,
+      shooter?.p.id,
+      shooter ? `${shooter.p.firstName} ${shooter.p.lastName} fires wide` : "Shot wide",
+    );
     this.handleBallOutOverGoalLine(attacking, f.toY);
   }
 
@@ -1739,6 +1837,7 @@ export class MatchSimulator {
     this.decisionCd = this.decisionDelay(side, p);
     this.ball.x = p.x;
     this.ball.y = p.y;
+    this.ballHeight = 0;
     this.looseLockSide = null;
   }
 
@@ -1750,6 +1849,7 @@ export class MatchSimulator {
     this.phase = "open";
     this.ball.x = clamp(x, 3, PITCH_W - 3);
     this.ball.y = clamp(y, 3, PITCH_H - 3);
+    this.ballHeight = 0;
     this.looseLockSide = lockSide;
     this.looseLockT = 0.22;
   }
@@ -2100,6 +2200,7 @@ export class MatchSimulator {
     this.flight = null;
     const spotX = side === "home" ? 890 : 110;
     this.ball = { x: spotX, y: PITCH_H / 2 };
+    this.ballHeight = 0;
     this.penaltyState = { side, timer: 2.6, resolved: false };
   }
 
@@ -2227,6 +2328,7 @@ export class MatchSimulator {
     this.setPiece = null;
     this.penaltyState = null;
     this.ball = { x: PITCH_W / 2, y: PITCH_H / 2 };
+    this.ballHeight = 0;
     this.resetShapes();
   }
 
@@ -2551,6 +2653,7 @@ export function buildTeamSide(opts: {
     starters,
     bench,
     roles,
+    displayNumbers: assignTacticalNumbers(roles),
     basePositions: positions,
     tactics: opts.tactics,
     directives: opts.directives,

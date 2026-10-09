@@ -194,4 +194,23 @@ describe("actionResolver", () => {
     expect(wins / N).toBeGreaterThan(0.92);
   });
 
+
+  it("long-shot specialists score from range more often than poor shooters", () => {
+    const goodRng = new SeededRNG(141);
+    const badRng = new SeededRNG(141);
+    const keeper = P({ reflexes: 12, shotStopping: 12, communication: 12 });
+    const specialist = P({ longShots: 19, technique: 17, composure: 16, finishing: 12 });
+    const poor = P({ longShots: 4, technique: 7, composure: 9, finishing: 9 });
+    let goodGoals = 0;
+    let poorGoals = 0;
+    const N = 5000;
+    for (let i = 0; i < N; i++) {
+      if (resolveShot(specialist, keeper, 29, 0.2, 0.15, goodRng).goal) goodGoals++;
+      if (resolveShot(poor, keeper, 29, 0.2, 0.15, badRng).goal) poorGoals++;
+    }
+    expect(goodGoals / N).toBeGreaterThan(0.07);
+    expect(poorGoals / N).toBeLessThan(0.025);
+    expect(goodGoals).toBeGreaterThan(poorGoals * 4);
+  });
+
 });
