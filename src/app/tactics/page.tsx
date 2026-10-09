@@ -55,6 +55,12 @@ const SLIDERS: {
 ];
 
 const PRESS_REACH = [0, 45, 95, 160, 235]; // visual press-zone depth per level
+const TACTICS_PITCH_H = 1000;
+const TACTICS_GOAL_MARGIN = 30;
+const TACTICS_GOAL_DEPTH = 24;
+const TACTICS_VIEW_H = TACTICS_PITCH_H + TACTICS_GOAL_MARGIN * 2;
+const tacticsPitchTop = (engineX: number) =>
+  ((TACTICS_GOAL_MARGIN + TACTICS_PITCH_H - engineX) / TACTICS_VIEW_H) * 100;
 
 export default function TacticsPage() {
   const save = useGameStore((s) => s.save);
@@ -97,8 +103,10 @@ export default function TacticsPage() {
     const fit = () => {
       const w = el.clientWidth;
       const h = el.clientHeight;
-      // Vertical board: 650 wide × 1000 high (home goal at the bottom).
-      if (w > 0 && h > 0) setPitchW(Math.max(110, Math.floor(Math.min(w, h * (650 / 1000)))));
+      // Vertical field plus exterior goal margins at both ends.
+      if (w > 0 && h > 0) {
+        setPitchW(Math.max(110, Math.floor(Math.min(w, h * (650 / TACTICS_VIEW_H)))));
+      }
     };
     fit();
     const ro = new ResizeObserver(fit);
@@ -168,9 +176,11 @@ export default function TacticsPage() {
   const toPitchCoords = (clientX: number, clientY: number) => {
     const rect = pitchRef.current?.getBoundingClientRect();
     if (!rect) return null;
-    // Display is rotated: pitch width = engine Y, top-to-bottom = 1000-X.
+    // Display is rotated: width = engine Y. Vertically, remove the exterior
+    // goal margin before converting top-to-bottom into 1000-X.
     const y = ((clientX - rect.left) / rect.width) * 650;
-    const x = (1 - (clientY - rect.top) / rect.height) * 1000;
+    const viewY = ((clientY - rect.top) / rect.height) * TACTICS_VIEW_H;
+    const x = TACTICS_PITCH_H - (viewY - TACTICS_GOAL_MARGIN);
     if (x < 10 || x > 990 || y < 10 || y > 640) return null;
     return { x: Math.round(x), y: Math.round(y) };
   };
@@ -335,12 +345,10 @@ export default function TacticsPage() {
           <div ref={wrapRef} className="flex min-h-0 flex-1 items-center justify-center p-1.5 sm:p-3">
             <div
               ref={pitchRef}
-              className="relative touch-none overflow-hidden rounded-xl border border-white/20 shadow-xl"
+              className="relative touch-none overflow-hidden rounded-xl border border-white/20 bg-[#102d18] shadow-xl"
               style={{
                 width: pitchW || "100%",
-                aspectRatio: "650 / 1000",
-                background:
-                  "repeating-linear-gradient(0deg, #2E7D32 0%, #2E7D32 10%, #317F35 10%, #317F35 20%)",
+                aspectRatio: `650 / ${TACTICS_VIEW_H}`,
               }}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
@@ -349,46 +357,81 @@ export default function TacticsPage() {
                 if (e.buttons === 0) onPointerCancel();
               }}
             >
-              <span className="pointer-events-none absolute left-1/2 top-1 z-20 -translate-x-1/2 text-[7px] font-black tracking-[0.18em] text-white/40">
+              <span
+                className="pointer-events-none absolute left-1/2 z-20 -translate-x-1/2 text-[7px] font-black tracking-[0.18em] text-white/45"
+                style={{ top: `${((TACTICS_GOAL_MARGIN + 7) / TACTICS_VIEW_H) * 100}%` }}
+              >
                 ATTACK ↑
               </span>
 
-              {/* pressing territory, rotated from engine X into vertical Y */}
-              {Number(draft.pressing) > 0 && (
-                <div
-                  className="pointer-events-none absolute inset-x-0 bg-gold/10"
-                  style={{ top: `${100 - pressTo / 10}%`, height: `${(pressTo - pressFrom) / 10}%` }}
-                >
-                  <div className="absolute inset-x-0 top-0 border-t border-dashed border-gold/65" />
-                </div>
-              )}
-
-              {/* full vertical pitch markings */}
-              <div className="pointer-events-none absolute inset-0">
-                <div className="absolute inset-x-0 top-1/2 h-px bg-white/55" />
-                <div className="absolute left-1/2 top-1/2 h-[12%] aspect-square -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/55" />
-                <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/70" />
-
-                {/* opponent penalty / goal areas */}
-                <div className="absolute left-[19.1%] top-0 h-[16.5%] w-[61.8%] border border-white/55" />
-                <div className="absolute left-[36%] top-0 h-[5.5%] w-[28%] border border-white/55" />
-                <span className="absolute left-1/2 top-[11%] h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/70" />
-                {/* visible goal/net (drawn inside so clipping cannot hide it) */}
-                <div className="absolute left-[43.5%] top-0 h-[2.5%] w-[13%] border-x-2 border-b-2 border-white/90 bg-white/15 shadow-[inset_0_0_0_1px_rgba(255,255,255,.18)]" />
-
-                {/* own penalty / goal areas */}
-                <div className="absolute bottom-0 left-[19.1%] h-[16.5%] w-[61.8%] border border-white/55" />
-                <div className="absolute bottom-0 left-[36%] h-[5.5%] w-[28%] border border-white/55" />
-                <span className="absolute bottom-[11%] left-1/2 h-1 w-1 -translate-x-1/2 translate-y-1/2 rounded-full bg-white/70" />
-                <div className="absolute bottom-0 left-[43.5%] h-[2.5%] w-[13%] border-x-2 border-t-2 border-white/90 bg-white/15 shadow-[inset_0_0_0_1px_rgba(255,255,255,.18)]" />
-
-                {draft.offsideTrap && (
+              {/* The striped playing surface is inset so both nets can occupy
+                  real exterior space behind their goal lines. */}
+              <div
+                className="pointer-events-none absolute inset-x-0 border border-white/55"
+                style={{
+                  top: `${(TACTICS_GOAL_MARGIN / TACTICS_VIEW_H) * 100}%`,
+                  height: `${(TACTICS_PITCH_H / TACTICS_VIEW_H) * 100}%`,
+                  background:
+                    "repeating-linear-gradient(0deg, #2E7D32 0%, #2E7D32 10%, #317F35 10%, #317F35 20%)",
+                }}
+              >
+                {/* pressing territory, rotated from engine X into vertical Y */}
+                {Number(draft.pressing) > 0 && (
                   <div
-                    className="absolute inset-x-0 border-t-2 border-dashed border-amber-300/85"
-                    style={{ top: `${100 - (300 + lineShift) / 10}%` }}
-                  />
+                    className="absolute inset-x-0 bg-gold/10"
+                    style={{ top: `${100 - pressTo / 10}%`, height: `${(pressTo - pressFrom) / 10}%` }}
+                  >
+                    <div className="absolute inset-x-0 top-0 border-t border-dashed border-gold/65" />
+                  </div>
                 )}
+
+                {/* full vertical pitch markings */}
+                <div className="absolute inset-0">
+                  <div className="absolute inset-x-0 top-1/2 h-px bg-white/55" />
+                  <div className="absolute left-1/2 top-1/2 h-[12%] aspect-square -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/55" />
+                  <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/70" />
+
+                  {/* opponent penalty / goal areas */}
+                  <div className="absolute left-[19.1%] top-0 h-[16.5%] w-[61.8%] border border-white/55" />
+                  <div className="absolute left-[36%] top-0 h-[5.5%] w-[28%] border border-white/55" />
+                  <span className="absolute left-1/2 top-[11%] h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/70" />
+
+                  {/* own penalty / goal areas */}
+                  <div className="absolute bottom-0 left-[19.1%] h-[16.5%] w-[61.8%] border border-white/55" />
+                  <div className="absolute bottom-0 left-[36%] h-[5.5%] w-[28%] border border-white/55" />
+                  <span className="absolute bottom-[11%] left-1/2 h-1 w-1 -translate-x-1/2 translate-y-1/2 rounded-full bg-white/70" />
+
+                  {draft.offsideTrap && (
+                    <div
+                      className="absolute inset-x-0 border-t-2 border-dashed border-amber-300/85"
+                      style={{ top: `${100 - (300 + lineShift) / 10}%` }}
+                    />
+                  )}
+                </div>
               </div>
+
+              {/* Nets: their open fronts meet the lines; all net depth remains
+                  outside the green playing surface. */}
+              <div
+                className="pointer-events-none absolute left-[43.5%] z-[2] w-[13%] border-x-2 border-t-2 border-white/90 bg-white/10"
+                style={{
+                  top: `${((TACTICS_GOAL_MARGIN - TACTICS_GOAL_DEPTH) / TACTICS_VIEW_H) * 100}%`,
+                  height: `${(TACTICS_GOAL_DEPTH / TACTICS_VIEW_H) * 100}%`,
+                  backgroundImage:
+                    "linear-gradient(90deg, transparent 45%, rgba(255,255,255,.3) 46%, rgba(255,255,255,.3) 54%, transparent 55%), linear-gradient(0deg, transparent 45%, rgba(255,255,255,.25) 46%, rgba(255,255,255,.25) 54%, transparent 55%)",
+                  backgroundSize: "8px 8px",
+                }}
+              />
+              <div
+                className="pointer-events-none absolute left-[43.5%] z-[2] w-[13%] border-x-2 border-b-2 border-white/90 bg-white/10"
+                style={{
+                  top: `${((TACTICS_GOAL_MARGIN + TACTICS_PITCH_H) / TACTICS_VIEW_H) * 100}%`,
+                  height: `${(TACTICS_GOAL_DEPTH / TACTICS_VIEW_H) * 100}%`,
+                  backgroundImage:
+                    "linear-gradient(90deg, transparent 45%, rgba(255,255,255,.3) 46%, rgba(255,255,255,.3) 54%, transparent 55%), linear-gradient(0deg, transparent 45%, rgba(255,255,255,.25) 46%, rgba(255,255,255,.25) 54%, transparent 55%)",
+                  backgroundSize: "8px 8px",
+                }}
+              />
 
               {/* formation dots: engine Y → horizontal, engine X → bottom-to-top */}
               {xi.starters.map((p, i) => {
@@ -403,7 +446,7 @@ export default function TacticsPage() {
                     className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-grab select-none rounded-full active:cursor-grabbing ${selectedPlayerId === p.id ? "ring-2 ring-gold/80 ring-offset-2 ring-offset-transparent" : ""}`}
                     style={{
                       left: `${Math.min(94, Math.max(6, (pos.y / 650) * 100))}%`,
-                      top: `${Math.min(96, Math.max(4, 100 - pos.x / 10))}%`,
+                      top: `${Math.min(97.4, Math.max(2.6, tacticsPitchTop(pos.x)))}%`,
                     }}
                     title={`${p.firstName} ${p.lastName} · #${number} ${xi.roles[i]} · tap for stats, drag to move`}
                   >

@@ -286,6 +286,13 @@ function emptyStats(): MatchStats {
 
 type KickoffReason = "start" | "half" | "restart";
 
+interface GoalCelebration {
+  side: Side;
+  scorerIndex: number;
+  targetX: number;
+  targetY: number;
+}
+
 export class MatchSimulator {
   readonly home: TeamSide;
   readonly away: TeamSide;
@@ -307,9 +314,12 @@ export class MatchSimulator {
   private ball = { x: PITCH_W / 2, y: PITCH_H / 2 };
   private ballHeight = 0;
   private carrier: { side: Side; i: number } | null = null;
+  /** World-time when the current player first controlled the ball. */
+  private carrierSince = 0;
   private lastTouchSide: Side = "home";
   private flight: Flight | null = null;
   private setPiece: SetPiece | null = null;
+  private celebration: GoalCelebration | null = null;
   private phaseTimer = 0;
   private decisionCd = 0;
   private looseLockSide: Side | null = null;
@@ -467,6 +477,10 @@ export class MatchSimulator {
     team.directives = directives;
     team.teamDirectives = teamDirectives;
     this.mergedDirectiveCache[side].clear();
+    if (this.carrier?.side === side) {
+      const carrier = this.players(side)[this.carrier.i];
+      if (carrier && this.shouldClearImmediately(side, carrier)) this.decisionCd = 0;
+    }
     this.pendingState = true;
   }
 
@@ -693,6 +707,7 @@ export class MatchSimulator {
     this.carrier = null;
     this.flight = null;
     this.setPiece = null;
+    this.celebration = null;
     this.penaltyState = null;
     this.ball = { x: PITCH_W / 2, y: PITCH_H / 2 };
     this.ballHeight = 0;
@@ -707,6 +722,7 @@ export class MatchSimulator {
       if (d < bestDist) { bestDist = d; best = i; }
     });
     this.carrier = { side, i: best };
+    this.carrierSince = this.worldTime;
     const kp = players[best];
     if (kp) {
       this.ball.x = kp.x;
@@ -746,9 +762,54 @@ export class MatchSimulator {
       const side = this.concedingSide ?? "home";
       this.concedingSide = null;
       this.startKickoff(side, "restart");
-    } else {
-      this.tickMovement(dt, false);
+      return;
     }
+
+    const celebration = this.celebration;
+    if (!celebration) return;
+    const scoringPlayers = this.players(celebration.side);
+    const scorer = scoringPlayers[celebration.scorerIndex];
+
+    // Keep the actual scoring positions for the replayable moment, then let
+    // the scorer run toward a corner while nearby team-mates form a moving
+    // huddle. This replaces the old instant teleport back to formation.
+    scoringPlayers.forEach((sp, i) => {
+      if (sp.sentOff) return;
+      if (sp.role === "GK") {
+        const base = this.team(celebration.side).basePositions[i];
+        if (base) {
+          sp.tx = base.x;
+          sp.ty = base.y;
+          this.movePlayer(sp, dt, 0.45);
+        }
+        return;
+      }
+      if (i === celebration.scorerIndex) {
+        sp.tx = celebration.targetX;
+        sp.ty = celebration.targetY;
+        this.movePlayer(sp, dt, 1.06);
+        return;
+      }
+      const angle = i * 2.18;
+      const ring = 25 + (i % 3) * 10;
+      const anchorX = scorer?.x ?? celebration.targetX;
+      const anchorY = scorer?.y ?? celebration.targetY;
+      sp.tx = clamp(anchorX + Math.cos(angle) * ring, 18, 982);
+      sp.ty = clamp(anchorY + Math.sin(angle) * ring, 14, 636);
+      this.movePlayer(sp, dt, 0.92);
+    });
+
+    // The conceding team walks back rather than joining normal open-play
+    // movement around a ball that is already in the net.
+    const defendingSide = this.other(celebration.side);
+    this.players(defendingSide).forEach((sp, i) => {
+      if (sp.sentOff) return;
+      const base = this.team(defendingSide).basePositions[i];
+      if (!base) return;
+      sp.tx = base.x;
+      sp.ty = base.y;
+      this.movePlayer(sp, dt, 0.55);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -800,8 +861,16 @@ export class MatchSimulator {
         const bd = b.d - (bDirective.pressHard ? 120 : bDirective.defensiveDuty ? 65 : 0) + (bDirective.pressLess ? 240 : 0);
         return ad - bd;
       });
-      let pressCount = pressing === 0 ? 0 : pressing === 1 ? 1 : pressing === 2 ? 2 : 3;
-      if ((gegen || justLost) && pressing > 0) pressCount = Math.min(4, pressCount + 1);
+      // One player engages and, at high intensity, one supports. Team-wide
+      // "press hard" raises urgency and prioritises players; it must never
+      // bypass this assignment and send four or more dots onto the carrier.
+      // Gegenpressing changes who/when, not the physical number able to tackle.
+      let pressCount = pressing === PressingIntensity.None
+        ? 0
+        : pressing >= PressingIntensity.High || gegen || justLost
+          ? 2
+          : 1;
+      pressCount = Math.min(2, pressCount);
       const pressers = new Set(pressOrder.slice(0, pressCount).map((o) => o.i));
 
       players.forEach((sp, i) => {
@@ -814,10 +883,13 @@ export class MatchSimulator {
         const roleLine = directive.defensiveDuty && sp.role !== "GK" ? "MID" : lineOf(sp.role);
 
         // Ball carrier drives into the next available line rather than walking
-        // straight forward regardless of role/style.
+        // straight forward regardless of role/style. Under pressure they keep
+        // their feet moving, turn away from contact and protect the ball while
+        // the shortened decision timer finds the release.
         if (this.carrier && this.carrier.side === side && this.carrier.i === i) {
+          const pressure = this.pressureOn(side, i);
           const drive = directive.defensiveDuty ? 18 : directStyle || justWon ? 68 : possessionStyle ? 28 : 45;
-          sp.tx = clamp(sp.x + dir * drive, 20, 980);
+          sp.tx = clamp(sp.x + dir * drive * (1 - pressure * 0.32), 20, 980);
           if (directive.stayWide) {
             sp.ty = sp.y < 325 ? 55 : 595;
           } else if (directive.cutInside || sp.role === "ST" || sp.role === "CF") {
@@ -828,6 +900,31 @@ export class MatchSimulator {
             const lower = this.opponentsWithin(side, sp.x + dir * 50, sp.y + 55, 9);
             sp.ty = clamp(sp.y + (upper < lower ? -28 : upper > lower ? 28 : 0), 18, 632);
           }
+
+          const closest = pressure > 0.2 ? this.closestOpponent(side, sp) : null;
+          if (closest) {
+            const separation = Math.hypot(closest.x - sp.x, closest.y - sp.y) / UNITS_PER_METER;
+            if (separation < 7.5) {
+              const upper = this.opponentsWithin(side, sp.x, sp.y - 58, 8);
+              const lower = this.opponentsWithin(side, sp.x, sp.y + 58, 8);
+              const awayY = sp.y - closest.y;
+              const escapeSign = Math.abs(awayY) > 7
+                ? Math.sign(awayY)
+                : upper !== lower
+                  ? (upper < lower ? -1 : 1)
+                  : (i % 2 === 0 ? -1 : 1);
+              const protectedY = sp.y + escapeSign * (30 + pressure * 30);
+              sp.ty = clamp(sp.ty * 0.35 + protectedY * 0.65, 18, 632);
+
+              // At the attacking goal line there is no forward space. Turning
+              // back into play is visibly active and creates a cutback/pass,
+              // instead of pinning the carrier motionless at x=20/980.
+              if (Math.abs(this.goalX(side) - sp.x) < 38) {
+                sp.tx = clamp(sp.x - dir * (9 + pressure * 12), 20, 980);
+              }
+            }
+          }
+
           this.drainEnergy(sp, dt, 1.15);
           this.movePlayer(sp, dt, directive.conserveEnergy ? 0.86 : 1.06);
           this.ball.x = sp.x + dir * 6;
@@ -968,10 +1065,11 @@ export class MatchSimulator {
         // Defensive actions: a designated set presses; everyone else protects
         // the formation. Gegenpressing activates immediately after losing it.
         const isPresser = !hasBall &&
+          pressers.has(i) &&
           !directive.pressLess &&
-          (pressers.has(i) || directive.pressHard || directive.defensiveDuty) &&
           !directive.conserveEnergy &&
-          (Math.hypot(sp.x - this.ball.x, sp.y - this.ball.y) < (directive.defensiveDuty ? 235 : justLost ? 260 : 205));
+          (Math.hypot(sp.x - this.ball.x, sp.y - this.ball.y) <
+            (directive.pressHard ? 260 : directive.defensiveDuty ? 235 : justLost ? 260 : 205));
         if (isPresser) {
           const urgency = gegen || pressing >= PressingIntensity.High ? 0.9 : 0.73;
           tx += (this.ball.x - tx) * urgency;
@@ -1059,12 +1157,16 @@ export class MatchSimulator {
     const p = this.players(side)[idx];
     if (!p) return 0;
     let nearest = Infinity;
+    let closeOpponents = 0;
     for (const op of this.players(this.other(side))) {
       if (op.sentOff) continue;
       const d = Math.hypot(op.x - p.x, op.y - p.y) / UNITS_PER_METER;
       if (d < nearest) nearest = d;
+      if (d < 9) closeOpponents += 1;
     }
-    return clamp((8 - nearest) / 8, 0, 1);
+    const contact = clamp((8 - nearest) / 8, 0, 1);
+    const crowd = Math.max(0, closeOpponents - 1) * 0.1;
+    return clamp(contact + crowd, 0, 1);
   }
 
   private opponentInterceptionsNear(side: Side, x: number, y: number): number {
@@ -1078,14 +1180,34 @@ export class MatchSimulator {
   }
 
   private tickCarrier(): void {
-    if (!this.carrier || this.decisionCd > 0) return;
+    if (!this.carrier) return;
     const side = this.carrier.side;
     const sp = this.players(side)[this.carrier.i];
     if (!sp) {
       this.carrier = null;
       return;
     }
+
+    if (this.decisionCd > 0) {
+      // A cooldown chosen in open space cannot remain blindly fixed after the
+      // press arrives. Collapse the remaining window as contact develops.
+      const pressure = this.pressureOn(side, this.carrier.i);
+      if (pressure > 0.38) {
+        const pressuredWindow = 0.07 + (1 - pressure) * 0.2;
+        this.decisionCd = Math.min(this.decisionCd, pressuredWindow);
+      }
+      if (this.decisionCd > 0) return;
+    }
     this.makeDecision(side, sp);
+  }
+
+  private shouldClearImmediately(side: Side, sp: SimPlayer, pressure?: number): boolean {
+    if (!this.directives(side, sp).clearImmediately) return false;
+    const dir = this.attackDir(side);
+    const distanceFromOwnGoal = Math.abs(sp.x - this.ownGoalX(side));
+    const inOwnHalf = (sp.x - 500) * dir < 0;
+    const livePressure = pressure ?? this.pressureOn(side, this.indexOfPlayer(side, sp));
+    return distanceFromOwnGoal < 335 || (inOwnHalf && livePressure > 0.34);
   }
 
   private makeDecision(side: Side, sp: SimPlayer): void {
@@ -1096,16 +1218,12 @@ export class MatchSimulator {
     const style = team.tactics.playStyle ?? PlayStyle.Balanced;
     const pressure = this.pressureOn(side, idx);
     const distanceFromOwnGoal = Math.abs(sp.x - this.ownGoalX(side));
-    const inOwnHalf = (sp.x - 500) * dir < 0;
 
     // An urgent-clearance plan has priority over style and role, but only in a
-    // credible danger zone. It never turns harmless possession high up the
-    // pitch into random hoofing.
-    if (
-      directive.clearImmediately &&
-      (distanceFromOwnGoal < 335 || (inOwnHalf && pressure > 0.34))
-    ) {
-      this.executeClearance(side, sp);
+    // credible danger zone. Reception itself removes the cooldown, so this is
+    // the first action rather than a late response after opponents arrive.
+    if (this.shouldClearImmediately(side, sp, pressure)) {
+      this.executeClearance(side, sp, true);
       return;
     }
 
@@ -1158,6 +1276,22 @@ export class MatchSimulator {
     if (this.rng.chance(shootUrge)) {
       this.executeShot(side, sp, distToGoal);
       return;
+    }
+
+    // A carrier who has already protected the ball under real pressure must
+    // release it now rather than chaining shield/dribble pauses while more
+    // opponents converge. Recycling backwards is a valid, deliberate pass.
+    const heldFor = this.worldTime - this.carrierSince;
+    if (pressure > 0.52 && heldFor > 0.72) {
+      const release = this.choosePass(side, sp, style, dir);
+      if (release) {
+        this.executePass(side, sp, release);
+        return;
+      }
+      if (distanceFromOwnGoal < 300 && pressure > 0.72) {
+        this.executeClearance(side, sp, false);
+        return;
+      }
     }
 
     // Under contact, strong/balanced players can shield before the opponent
@@ -1214,7 +1348,7 @@ export class MatchSimulator {
     this.decisionCd = this.decisionDelay(side, sp, 0.7);
   }
 
-  private executeClearance(side: Side, sp: SimPlayer): void {
+  private executeClearance(side: Side, sp: SimPlayer, instructed: boolean): void {
     const dir = this.attackDir(side);
     const distanceUnits = this.rng.float(380, 570);
     const toX = clamp(sp.x + dir * distanceUnits, 24, 976);
@@ -1224,12 +1358,14 @@ export class MatchSimulator {
     const toY = clamp(sp.y + awayFromCentre * this.rng.float(65, 210), 22, 628);
     const distanceM = Math.hypot(toX - sp.x, toY - sp.y) / UNITS_PER_METER;
 
-    this.pushInstructionCommentary(
-      `clear:${side}`,
-      side,
-      sp,
-      `${sp.p.firstName} ${sp.p.lastName} follows the instruction and clears the danger immediately.`,
-    );
+    if (instructed) {
+      this.pushInstructionCommentary(
+        `clear:${side}`,
+        side,
+        sp,
+        `${sp.p.firstName} ${sp.p.lastName} follows the instruction and clears the danger immediately.`,
+      );
+    }
     this.launchFlight({
       kind: "pass",
       fromX: this.ball.x,
@@ -1256,7 +1392,18 @@ export class MatchSimulator {
     const leading = side === "home" ? this.homeScore > this.awayScore : this.awayScore > this.homeScore;
     if (leading && t.timeWasting === TimeWasting.Always) base += 0.28;
     if (leading && t.timeWasting === TimeWasting.Late && this.gameTime > 4500) base += 0.22;
-    return clamp(base * factor + this.rng.float(0.02, 0.16), 0.12, 1.05);
+
+    // Pressure compresses the available thinking time. Composure still
+    // influences quality in the resolver; it must not manifest as standing
+    // still while the press closes around the carrier.
+    const idx = this.indexOfPlayer(side, sp);
+    const pressure = idx >= 0 ? this.pressureOn(side, idx) : 0;
+    const pressureFactor = 1 - pressure * 0.58;
+    return clamp(
+      base * factor * pressureFactor + this.rng.float(0.015, 0.12),
+      0.06,
+      1.05,
+    );
   }
 
   private executeCross(side: Side, sp: SimPlayer, cutback: boolean): void {
@@ -1957,7 +2104,10 @@ export class MatchSimulator {
     this.lastTouchSide = side;
     this.flight = null;
     this.phase = "open";
-    this.decisionCd = this.decisionDelay(side, p);
+    this.carrierSince = this.worldTime;
+    this.decisionCd = this.shouldClearImmediately(side, p)
+      ? 0
+      : this.decisionDelay(side, p);
     this.ball.x = p.x;
     this.ball.y = p.y;
     this.ballHeight = 0;
@@ -2443,6 +2593,11 @@ export class MatchSimulator {
       `⚽ GOAL! ${scorerName} — ${this.homeScore}-${this.awayScore}`,
     );
 
+    const scorerIndex = sc ? players.indexOf(sc) : -1;
+    const goalX = this.goalX(side);
+    const dir = this.attackDir(side);
+    const scorerY = sc?.y ?? this.ball.y;
+
     this.concedingSide = this.other(side);
     this.phase = "celebration";
     this.phaseTimer = 3.5;
@@ -2450,9 +2605,20 @@ export class MatchSimulator {
     this.flight = null;
     this.setPiece = null;
     this.penaltyState = null;
-    this.ball = { x: PITCH_W / 2, y: PITCH_H / 2 };
+    this.decisionCd = 0;
+    this.celebration = {
+      side,
+      scorerIndex,
+      targetX: clamp(goalX - dir * 72, 20, 980),
+      targetY: scorerY < PITCH_H / 2 ? 68 : PITCH_H - 68,
+    };
+    // Leave the scored ball visibly in the net behind the goal line. The
+    // renderer has a true exterior goal margin for these coordinates.
+    this.ball = {
+      x: goalX + dir * 18,
+      y: clamp(this.ball.y, PITCH_H / 2 - 32, PITCH_H / 2 + 32),
+    };
     this.ballHeight = 0;
-    this.resetShapes();
   }
 
   private nearestToGoal(side: Side): SimPlayer | null {

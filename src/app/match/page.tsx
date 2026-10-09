@@ -35,6 +35,14 @@ type WorkerMsg =
   | { type: "halfTime" }
   | { type: "fullTime"; state: MatchSnapshot };
 
+interface GoalCelebrationView {
+  id: number;
+  side: Side;
+  teamName: string;
+  scorerName: string;
+  color: string;
+}
+
 export default function MatchPage() {
   return (
     <Suspense fallback={<div className="flex h-full items-center justify-center bg-navy text-white/60">Loading…</div>}>
@@ -67,6 +75,9 @@ function MatchScreen() {
   const speedRef = useRef<1 | 2 | 4 | 8>(speed);
   speedRef.current = speed;
   const [events, setEvents] = useState<MatchEvent[]>([]);
+  const [goalCelebration, setGoalCelebration] = useState<GoalCelebrationView | null>(null);
+  const goalCelebrationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const goalCelebrationId = useRef(0);
   const [pendingSub, setPendingSub] = useState<{ off: number; on: number; dirty: boolean }>({ off: 0, on: 0, dirty: false });
   // knockout drama
   const [etGoals, setEtGoals] = useState<{ h: number; a: number } | null>(null);
@@ -158,11 +169,37 @@ function MatchScreen() {
           break;
         }
         case "event": {
-          if (msg.event.type === "Goal") {
+          if (msg.event.type === MatchEventType.Goal) {
+            const scoringSide: Side | null =
+              msg.event.clubId === ctx.home.clubId ? "home" :
+              msg.event.clubId === ctx.away.clubId ? "away" : null;
+            if (scoringSide) {
+              const team = scoringSide === "home" ? ctx.home : ctx.away;
+              const scorer = [...team.starters, ...team.bench]
+                .find((player) => player.id === msg.event.playerId);
+              goalCelebrationId.current += 1;
+              setGoalCelebration({
+                id: goalCelebrationId.current,
+                side: scoringSide,
+                teamName: team.name,
+                scorerName: scorer
+                  ? `${scorer.firstName} ${scorer.lastName}`
+                  : "What a finish!",
+                color: team.primaryColor,
+              });
+              sceneRef.current?.playGoalAnimation(scoringSide);
+              if (goalCelebrationTimer.current) clearTimeout(goalCelebrationTimer.current);
+              const celebrationMs = Math.min(2300, Math.max(850, 7000 / speedRef.current - 100));
+              goalCelebrationTimer.current = setTimeout(() => {
+                setGoalCelebration(null);
+                goalCelebrationTimer.current = null;
+              }, celebrationMs);
+            }
+
             const vib = useGameStore.getState().save?.settings.vibration;
             if (vib !== false) {
               try {
-                navigator.vibrate?.(200);
+                navigator.vibrate?.([120, 60, 180]);
               } catch { /* noop */ }
             }
           }
@@ -192,6 +229,10 @@ function MatchScreen() {
 
     return () => {
       cancelled = true;
+      if (goalCelebrationTimer.current) {
+        clearTimeout(goalCelebrationTimer.current);
+        goalCelebrationTimer.current = null;
+      }
       try {
         void screen.orientation?.unlock?.();
       } catch { /* noop */ }
@@ -437,6 +478,9 @@ function MatchScreen() {
             homeNumbers={ctx.home.displayNumbers}
             awayNumbers={ctx.away.displayNumbers}
           />
+          {goalCelebration && (
+            <GoalCelebrationOverlay key={goalCelebration.id} goal={goalCelebration} />
+          )}
           {snapshot?.ball.airborne && (
             <div className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full border border-gold/60 bg-navy/90 px-2.5 py-1 text-[9px] font-black tracking-widest text-gold shadow-lg">
               ↑ AIR BALL
@@ -633,6 +677,45 @@ function MatchScreen() {
         </div>
       )}
     </main>
+  );
+}
+
+const GOAL_CONFETTI = Array.from({ length: 18 }, (_, i) => ({
+  left: 5 + ((i * 37) % 91),
+  delay: (i % 6) * 45,
+  drift: ((i * 29) % 90) - 45,
+  rotate: 140 + ((i * 83) % 320),
+}));
+
+function GoalCelebrationOverlay({ goal }: { goal: GoalCelebrationView }) {
+  return (
+    <div
+      className={`goal-celebration goal-celebration--${goal.side} pointer-events-none absolute inset-2 z-30 overflow-hidden rounded-lg`}
+      style={{ "--goal-team-color": goal.color } as React.CSSProperties}
+      role="status"
+      aria-live="assertive"
+      aria-label={`Goal for ${goal.teamName}, scored by ${goal.scorerName}`}
+    >
+      <div className="goal-celebration__flash" />
+      {GOAL_CONFETTI.map((piece, i) => (
+        <span
+          key={i}
+          className="goal-celebration__confetti"
+          style={{
+            left: `${piece.left}%`,
+            animationDelay: `${piece.delay}ms`,
+            backgroundColor: i % 3 === 0 ? goal.color : i % 3 === 1 ? "#F0A500" : "#FFFFFF",
+            "--goal-drift": `${piece.drift}px`,
+            "--goal-rotate": `${piece.rotate}deg`,
+          } as React.CSSProperties}
+        />
+      ))}
+      <div className="goal-celebration__banner">
+        <span className="goal-celebration__word">GOAL!</span>
+        <span className="goal-celebration__team">{goal.teamName}</span>
+        <span className="goal-celebration__scorer">{goal.scorerName}</span>
+      </div>
+    </div>
   );
 }
 

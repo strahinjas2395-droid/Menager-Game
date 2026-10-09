@@ -2,16 +2,32 @@
 
 /**
  * MatchCanvas — Phaser 3 pitch renderer embedded in React.
- * Renders at 2× resolution (2000×1300 backing store) so lines and dots stay
- * crisp when the canvas is scaled down to the viewport.
+ * Renders at 2× resolution so lines and dots stay crisp when the canvas is
+ * scaled down to the viewport. The view is wider than the playing surface:
+ * that exterior space is where the two goals physically belong.
  */
 import { useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
 
 const PITCH_W = 1000;
 const PITCH_H = 650;
-/** render scale: all drawing happens at R× the logical pitch size */
+const GOAL_DEPTH = 24;
+const OUTER_MARGIN_X = 32;
+const VIEW_W = PITCH_W + OUTER_MARGIN_X * 2;
+/** render scale: all drawing happens at R× the logical view size */
 const R = 2;
+
+/** Exported geometry keeps the field/goal relationship explicit and testable. */
+export const MATCH_PITCH_VIEW = Object.freeze({
+  viewWidth: VIEW_W,
+  pitchLeft: OUTER_MARGIN_X,
+  pitchRight: OUTER_MARGIN_X + PITCH_W,
+  leftGoalBack: OUTER_MARGIN_X - GOAL_DEPTH,
+  rightGoalBack: OUTER_MARGIN_X + PITCH_W + GOAL_DEPTH,
+  goalDepth: GOAL_DEPTH,
+});
+
+const renderX = (pitchX: number) => (pitchX + OUTER_MARGIN_X) * R;
 
 export class MatchScene {
   private scene: import("phaser").Scene | null = null;
@@ -20,6 +36,7 @@ export class MatchScene {
   private ball: import("phaser").GameObjects.Arc | null = null;
   private ballShadow: import("phaser").GameObjects.Ellipse | null = null;
   private airBadge: import("phaser").GameObjects.Text | null = null;
+  private goalFx: import("phaser").GameObjects.GameObject[] = [];
   private gameRef: import("phaser").Game | null = null;
 
   create(
@@ -35,13 +52,13 @@ export class MatchScene {
     this.awayDots = numbers.away.map((n, i) => this.makeDot(scene, colors.away, n, false, i));
 
     this.ballShadow = scene.add
-      .ellipse((PITCH_W / 2) * R, (PITCH_H / 2) * R + 5, 25, 12, 0x000000, 0.34)
+      .ellipse(renderX(PITCH_W / 2), (PITCH_H / 2) * R + 5, 25, 12, 0x000000, 0.34)
       .setDepth(9);
     this.ball = scene.add
-      .circle((PITCH_W / 2) * R, (PITCH_H / 2) * R, 11, 0xffffff)
+      .circle(renderX(PITCH_W / 2), (PITCH_H / 2) * R, 11, 0xffffff)
       .setDepth(11);
     this.ball.setStrokeStyle(3, 0x222222, 0.9);
-    this.airBadge = scene.add.text((PITCH_W / 2) * R, (PITCH_H / 2) * R - 28, "AIR", {
+    this.airBadge = scene.add.text(renderX(PITCH_W / 2), (PITCH_H / 2) * R - 28, "AIR", {
       fontFamily: "Arial, Helvetica, sans-serif",
       fontSize: "18px",
       color: "#ffd166",
@@ -86,37 +103,45 @@ export class MatchScene {
       strokeThickness: filled ? 3 : 4,
     });
     label.setOrigin(0.5);
-    const c = scene.add.container((PITCH_W / 2) * R, (PITCH_H / 2) * R, [g, label]);
+    const c = scene.add.container(renderX(PITCH_W / 2), (PITCH_H / 2) * R, [g, label]);
     c.setDepth(5 + index * 0.01);
     return c;
   }
 
   private drawPitch(scene: import("phaser").Scene): void {
     const g = scene.add.graphics();
-    const W = PITCH_W * R;
+    const W = VIEW_W * R;
     const H = PITCH_H * R;
+    const pitchLeft = renderX(0);
+    const pitchRight = renderX(PITCH_W);
+    const pitchWidth = PITCH_W * R;
+    const leftLine = pitchLeft + 3;
+    const rightLine = pitchRight - 3;
     const s = (n: number) => n * R; // logical → render units
 
-    // grass with subtle mowing stripes
-    g.fillStyle(0x2e7d32, 1);
+    // The canvas exterior is deliberately not grass: the goal frames and nets
+    // sit in this run-off area, behind (never inside) the two goal lines.
+    g.fillStyle(0x102d18, 1);
     g.fillRect(0, 0, W, H);
+    g.fillStyle(0x2e7d32, 1);
+    g.fillRect(pitchLeft, 0, pitchWidth, H);
     g.fillStyle(0x327f35, 1);
     for (let i = 0; i < 10; i += 2) {
-      g.fillRect((i * W) / 10, 0, W / 10, H);
+      g.fillRect(pitchLeft + (i * pitchWidth) / 10, 0, pitchWidth / 10, H);
     }
 
     const line = 0xffffff;
     g.lineStyle(6, line, 0.9);
 
-    // outline
-    g.strokeRect(3, 3, W - 6, H - 6);
+    // Playing-surface outline. Engine x=0/1000 maps to these goal lines.
+    g.strokeRect(leftLine, 3, pitchWidth - 6, H - 6);
     // halfway line + centre circle
-    g.lineBetween(s(500), 3, s(500), H - 3);
+    g.lineBetween(renderX(500), 3, renderX(500), H - 3);
     g.beginPath();
-    g.arc(s(500), s(325), s(91.5), 0, Math.PI * 2, false);
+    g.arc(renderX(500), s(325), s(91.5), 0, Math.PI * 2, false);
     g.strokePath();
     g.fillStyle(line, 0.95);
-    g.fillCircle(s(500), s(325), 5);
+    g.fillCircle(renderX(500), s(325), 5);
 
     // penalty boxes (165 deep, ±201), goal areas (55 deep, ±91)
     const boxY1 = s(325 - 201);
@@ -124,18 +149,18 @@ export class MatchScene {
     const gaY1 = s(325 - 91);
     const gaH = s(182);
     // left box
-    g.strokeRect(3, boxY1, s(165), boxH);
-    g.strokeRect(3, gaY1, s(55), gaH);
-    g.fillCircle(s(110), s(325), 5);
+    g.strokeRect(leftLine, boxY1, s(165), boxH);
+    g.strokeRect(leftLine, gaY1, s(55), gaH);
+    g.fillCircle(renderX(110), s(325), 5);
     g.beginPath();
-    g.arc(3, s(325), s(91.5), -0.93, 0.93, false);
+    g.arc(leftLine, s(325), s(91.5), -0.93, 0.93, false);
     g.strokePath();
     // right box
-    g.strokeRect(W - s(165) - 3, boxY1, s(165), boxH);
-    g.strokeRect(W - s(55) - 3, gaY1, s(55), gaH);
-    g.fillCircle(W - s(110), s(325), 5);
+    g.strokeRect(rightLine - s(165), boxY1, s(165), boxH);
+    g.strokeRect(rightLine - s(55), gaY1, s(55), gaH);
+    g.fillCircle(renderX(PITCH_W - 110), s(325), 5);
     g.beginPath();
-    g.arc(W - 3, s(325), s(91.5), Math.PI - 0.93, Math.PI + 0.93, false);
+    g.arc(rightLine, s(325), s(91.5), Math.PI - 0.93, Math.PI + 0.93, false);
     g.strokePath();
 
     // corner arcs — each in its own path so strokes never accumulate
@@ -144,32 +169,94 @@ export class MatchScene {
       g.arc(x, y, s(12), a0, a1, false);
       g.strokePath();
     };
-    corner(3, 3, 0, Math.PI / 2);
-    corner(W - 3, 3, Math.PI / 2, Math.PI);
-    corner(3, H - 3, -Math.PI / 2, 0);
-    corner(W - 3, H - 3, Math.PI, Math.PI * 1.5);
+    corner(leftLine, 3, 0, Math.PI / 2);
+    corner(rightLine, 3, Math.PI / 2, Math.PI);
+    corner(leftLine, H - 3, -Math.PI / 2, 0);
+    corner(rightLine, H - 3, Math.PI, Math.PI * 1.5);
 
-    // Goals/nets are drawn just inside the goal line. The earlier renderer
-    // placed them outside the canvas, where browser clipping made them vanish.
+    // Goal mouths share the goal-line plane, while every centimetre of net is
+    // in the exterior margin: left extends left, right extends right.
     const goalY = s(325 - 37);
     const goalH = s(74);
-    const goalD = s(24);
+    const goalD = s(GOAL_DEPTH);
+    const leftBack = leftLine - goalD;
+    const rightBack = rightLine + goalD;
     g.fillStyle(0xffffff, 0.13);
-    g.fillRect(3, goalY, goalD, goalH);
-    g.fillRect(W - goalD - 3, goalY, goalD, goalH);
+    g.fillRect(leftBack, goalY, goalD, goalH);
+    g.fillRect(rightLine, goalY, goalD, goalH);
     g.lineStyle(6, line, 0.96);
-    g.strokeRect(3, goalY, goalD, goalH);
-    g.strokeRect(W - goalD - 3, goalY, goalD, goalH);
+    g.strokeRect(leftBack, goalY, goalD, goalH);
+    g.strokeRect(rightLine, goalY, goalD, goalH);
     // net mesh
     g.lineStyle(2, line, 0.34);
     for (let n = 1; n < 4; n++) {
       const gy = goalY + (goalH * n) / 4;
-      g.lineBetween(3, gy, goalD + 3, gy);
-      g.lineBetween(W - goalD - 3, gy, W - 3, gy);
+      g.lineBetween(leftBack, gy, leftLine, gy);
+      g.lineBetween(rightLine, gy, rightBack, gy);
     }
     for (let n = 1; n < 3; n++) {
-      g.lineBetween(3 + (goalD * n) / 3, goalY, 3 + (goalD * n) / 3, goalY + goalH);
-      g.lineBetween(W - goalD - 3 + (goalD * n) / 3, goalY, W - goalD - 3 + (goalD * n) / 3, goalY + goalH);
+      g.lineBetween(leftBack + (goalD * n) / 3, goalY, leftBack + (goalD * n) / 3, goalY + goalH);
+      g.lineBetween(rightLine + (goalD * n) / 3, goalY, rightLine + (goalD * n) / 3, goalY + goalH);
+    }
+  }
+
+  private finishGoalFx(object: import("phaser").GameObjects.GameObject): void {
+    this.goalFx = this.goalFx.filter((candidate) => candidate !== object);
+    object.destroy();
+  }
+
+  /** Flash and ripple the net that was scored into. React supplies the large
+   * score banner; this effect keeps the goal itself visibly involved. */
+  playGoalAnimation(scoringSide: "home" | "away"): void {
+    const scene = this.scene;
+    if (!scene) return;
+
+    this.goalFx.forEach((object) => {
+      scene.tweens.killTweensOf(object);
+      object.destroy();
+    });
+    this.goalFx = [];
+
+    const goalLineX = scoringSide === "home" ? renderX(PITCH_W) - 3 : renderX(0) + 3;
+    const direction = scoringSide === "home" ? 1 : -1;
+    const centreX = goalLineX + direction * GOAL_DEPTH * R * 0.5;
+    const centreY = (PITCH_H / 2) * R;
+    const glow = scene.add
+      .rectangle(centreX, centreY, GOAL_DEPTH * R, 82 * R, 0xf0a500, 0.48)
+      .setDepth(18);
+    this.goalFx.push(glow);
+    scene.tweens.add({
+      targets: glow,
+      alpha: 0,
+      scaleX: 1.45,
+      duration: 950,
+      ease: "Cubic.Out",
+      onComplete: () => this.finishGoalFx(glow),
+    });
+
+    for (let i = 0; i < 3; i++) {
+      const ring = scene.add
+        .circle(centreX, centreY, 18 + i * 7, 0xf0a500, 0)
+        .setStrokeStyle(5 - i, i === 1 ? 0xffffff : 0xf0a500, 0.9)
+        .setDepth(19);
+      this.goalFx.push(ring);
+      scene.tweens.add({
+        targets: ring,
+        alpha: 0,
+        scaleX: 3.4 + i * 0.45,
+        scaleY: 3.4 + i * 0.45,
+        duration: 700 + i * 180,
+        delay: i * 70,
+        ease: "Cubic.Out",
+        onComplete: () => this.finishGoalFx(ring),
+      });
+    }
+
+    const reducedMotion = typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (!reducedMotion) {
+      scene.cameras.main.flash(170, 240, 165, 0, false);
+      scene.cameras.main.shake(280, 0.0035);
     }
   }
 
@@ -189,7 +276,7 @@ export class MatchScene {
       scene.tweens.killTweensOf(dot);
       scene.tweens.add({
         targets: dot,
-        x: p.x * R,
+        x: renderX(p.x),
         y: p.y * R,
         duration: 100,
         ease: "Linear",
@@ -205,7 +292,7 @@ export class MatchScene {
       scene.tweens.killTweensOf(this.ball);
       scene.tweens.add({
         targets: this.ball,
-        x: ballPos.x * R,
+        x: renderX(ballPos.x),
         y: ballPos.y * R - lift,
         scaleX: scale,
         scaleY: scale,
@@ -217,7 +304,7 @@ export class MatchScene {
         scene.tweens.killTweensOf(this.ballShadow);
         scene.tweens.add({
           targets: this.ballShadow,
-          x: ballPos.x * R,
+          x: renderX(ballPos.x),
           y: ballPos.y * R + 5,
           alpha: Math.max(0.1, 0.34 - height / 280),
           scaleX: 1 + Math.min(0.7, height / 90),
@@ -227,12 +314,13 @@ export class MatchScene {
       }
       if (this.airBadge) {
         this.airBadge.setVisible(Boolean(ballPos.airborne));
-        this.airBadge.setPosition(ballPos.x * R, ballPos.y * R - lift - 28);
+        this.airBadge.setPosition(renderX(ballPos.x), ballPos.y * R - lift - 28);
       }
     }
   }
 
   destroy(): void {
+    this.goalFx = [];
     this.gameRef?.destroy(true);
     this.gameRef = null;
     this.scene = null;
@@ -291,13 +379,13 @@ export default function MatchCanvas({
       game = new Phaser.Game({
         type: Phaser.AUTO,
         parent: containerRef.current,
-        width: PITCH_W * R,
+        width: VIEW_W * R,
         height: PITCH_H * R,
-        backgroundColor: "#1f5c22",
+        backgroundColor: "#102d18",
         scale: {
           mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
-          width: PITCH_W * R,
+          width: VIEW_W * R,
           height: PITCH_H * R,
         },
         render: { antialias: true, antialiasGL: true },

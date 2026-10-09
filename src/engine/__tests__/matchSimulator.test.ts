@@ -83,6 +83,29 @@ function playFullMatch(sim: MatchSimulator) {
   sim.skipToStop(); // -> fulltime
 }
 
+interface SimulatorTestPlayer {
+  p: Player;
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+  role: string;
+  sentOff: boolean;
+}
+
+interface SimulatorTestHarness {
+  homePlayers: SimulatorTestPlayer[];
+  awayPlayers: SimulatorTestPlayer[];
+  ball: { x: number; y: number };
+  decisionCd: number;
+  giveBallTo: (side: "home" | "away", index: number) => void;
+  awardGoal: (side: "home" | "away", scorer?: SimulatorTestPlayer | null) => void;
+}
+
+function simulatorHarness(sim: MatchSimulator): SimulatorTestHarness {
+  return sim as unknown as SimulatorTestHarness;
+}
+
 describe("selectBestXI", () => {
   it("picks exactly 11 starters incl. a GK, plus a bench", () => {
     const rng = new SeededRNG(5);
@@ -380,6 +403,119 @@ describe("MatchSimulator", () => {
       expect(events.every((event) => event.clubId === home.clubId)).toBe(true);
     }
     expect(clearances).toBeGreaterThanOrEqual(2);
+  });
+
+  it("removes current and reception delays for an instructed clearance in genuine danger", () => {
+    const { sim, home } = setup(960);
+    const internal = simulatorHarness(sim);
+    const defenderIndex = Math.max(0, home.roles.findIndex((role) => role === "CB"));
+    const defender = internal.homePlayers[defenderIndex];
+    defender.x = 125;
+    defender.y = 325;
+    defender.tx = defender.x;
+    defender.ty = defender.y;
+    internal.awayPlayers.forEach((player, index) => {
+      player.x = 720 + index * 8;
+      player.y = 60 + index * 45;
+    });
+
+    internal.giveBallTo("home", defenderIndex);
+    expect(internal.decisionCd).toBeGreaterThan(0);
+    sim.updateDirectives("home", {}, { clearImmediately: true });
+    expect(internal.decisionCd).toBe(0);
+    internal.decisionCd = 1;
+    internal.giveBallTo("home", defenderIndex);
+    expect(internal.decisionCd).toBe(0);
+
+    sim.tick(0.1);
+    expect(sim.getState().phase).toBe("flight");
+    expect(sim.getEvents().some(
+      (event) => event.type === "Instruction" && event.text.includes("clears the danger immediately"),
+    )).toBe(true);
+  });
+
+  it("keeps a pressured carrier moving when there is no space beyond the goal line", () => {
+    const { sim, home } = setup(961);
+    const internal = simulatorHarness(sim);
+    const carrierIndex = Math.max(0, home.roles.findIndex((role) => role === "ST"));
+    const carrier = internal.homePlayers[carrierIndex];
+    carrier.x = 980;
+    carrier.y = 325;
+    carrier.tx = carrier.x;
+    carrier.ty = carrier.y;
+    internal.awayPlayers.forEach((player) => {
+      player.x = 100;
+      player.y = 90;
+      player.tx = player.x;
+      player.ty = player.y;
+    });
+    internal.awayPlayers.find((player) => player.role !== "GK")!.x = 935;
+    internal.awayPlayers.find((player) => player.role !== "GK")!.y = 325;
+
+    internal.giveBallTo("home", carrierIndex);
+    internal.decisionCd = 5; // isolate protective movement from the next action
+    const before = { x: carrier.x, y: carrier.y };
+    sim.tick(0.1);
+    const after = sim.getState().homePositions[carrierIndex];
+
+    expect(Math.hypot(after.x - before.x, after.y - before.y)).toBeGreaterThan(1);
+    expect(after.x).toBeLessThan(before.x); // turns back into playable space
+    expect(internal.decisionCd).toBeLessThan(0.25); // pressure cancels the stale wait
+  });
+
+  it("caps coordinated pressure instead of letting a team instruction swarm the carrier", () => {
+    const { sim, home, away } = setup(962);
+    const internal = simulatorHarness(sim);
+    away.tactics.pressing = PressingIntensity.Extreme;
+    sim.updateDirectives("away", {}, { pressHard: true });
+
+    const carrierIndex = Math.max(0, home.roles.findIndex((role) => role !== "GK"));
+    const carrier = internal.homePlayers[carrierIndex];
+    carrier.x = 250;
+    carrier.y = 250;
+    carrier.tx = carrier.x;
+    carrier.ty = carrier.y;
+    const outfield = internal.awayPlayers.filter((player) => player.role !== "GK");
+    outfield.forEach((player, index) => {
+      const angle = (index / outfield.length) * Math.PI * 2;
+      player.x = 250 + Math.cos(angle) * 120;
+      player.y = 250 + Math.sin(angle) * 120;
+      player.tx = player.x;
+      player.ty = player.y;
+    });
+
+    internal.giveBallTo("home", carrierIndex);
+    internal.decisionCd = 5;
+    sim.tick(0.1);
+    const directlyConverging = outfield.filter(
+      (player) => Math.hypot(player.tx - internal.ball.x, player.ty - internal.ball.y) < 100,
+    );
+
+    expect(directlyConverging.length).toBeLessThanOrEqual(3);
+  });
+
+  it("leaves the scored ball behind the line and animates the scoring team before kickoff", () => {
+    const { sim, home } = setup(963);
+    const internal = simulatorHarness(sim);
+    const scorerIndex = Math.max(0, home.roles.findIndex((role) => role === "ST"));
+    const scorer = internal.homePlayers[scorerIndex];
+    scorer.x = 940;
+    scorer.y = 120;
+    scorer.tx = scorer.x;
+    scorer.ty = scorer.y;
+    internal.ball = { x: 994, y: 310 };
+
+    internal.awardGoal("home", scorer);
+    const scored = sim.getState();
+    expect(scored.phase).toBe("celebration");
+    expect(scored.ball.x).toBeGreaterThan(1000);
+    expect(scored.homePositions[scorerIndex].x).toBe(940); // no instant formation reset
+    expect(sim.getEvents().at(-1)?.type).toBe("Goal");
+
+    sim.tick(0.2);
+    const celebrating = sim.getState();
+    expect(celebrating.homePositions[scorerIndex]).not.toEqual(scored.homePositions[scorerIndex]);
+    expect(celebrating.ball.x).toBeGreaterThan(1000);
   });
 
 });
