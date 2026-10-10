@@ -13,6 +13,7 @@ import { generateSquad } from "@/database/playerGenerator";
 import {
   DefensiveLine,
   Difficulty,
+  MatchEventType,
   MentalityLevel,
   PlayStyle,
   PlaystyleTag,
@@ -214,6 +215,7 @@ describe("MatchSimulator", () => {
     const analysis = state.analysis;
     expect(analysis).toBeDefined();
     expect(analysis?.schemaVersion).toBe(2);
+    expect(analysis?.injuries).toBeDefined();
     expect(Object.keys(analysis?.players ?? {}).length).toBeGreaterThanOrEqual(22);
     expect(analysis?.tacticalEvents?.length).toBeGreaterThan(40);
     expect(analysis?.tacticalEvents?.some((event) => event.type === "pass" || event.type === "throughBall")).toBe(true);
@@ -236,12 +238,30 @@ describe("MatchSimulator", () => {
     for (const player of players) {
       expect(player.heatmap).toHaveLength(96);
       expect(player.minutesPlayed).toBeGreaterThan(0);
+      expect(player.conditionBefore).toBeGreaterThan(0);
+      expect(player.conditionAfter).toBeLessThanOrEqual(player.conditionBefore ?? 100);
       expect(player.passesFailed).toBe(Math.max(0, player.passesAttempted - player.passesCompleted));
     }
 
     const replay = setup(4242).sim;
     playFullMatch(replay);
     expect(replay.getAnalysis()).toEqual(sim.getAnalysis());
+  });
+
+  it("resolves reproducible in-match injuries without counting them as red cards", () => {
+    const { sim } = setup(7);
+    playFullMatch(sim);
+    const state = sim.getState();
+    const injury = state.analysis?.injuries?.[0];
+    expect(injury).toMatchObject({
+      playerName: "Kyle Hughes",
+      side: "away",
+      name: "Ankle sprain",
+      severity: "Minor",
+      recoveryWeeks: 2,
+    });
+    expect(state.events.some((event) => event.type === MatchEventType.Injury && event.playerId === injury?.playerId)).toBe(true);
+    expect(state.analysis?.players[injury!.playerId].redCards).toBe(0);
   });
 
   it("scales opposition observation and decisions across the expanded difficulty ladder", () => {

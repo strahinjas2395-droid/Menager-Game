@@ -20,6 +20,7 @@ import {
   DefensiveLine,
   type MatchAnalysis,
   type MatchEvent,
+  type MatchInjuryRecord,
   type MatchPlanAttackApproach,
   type MatchStats,
   type OpponentMatchPlan,
@@ -53,6 +54,14 @@ import { mergeDirectives, type PlayerDirectives } from "@/engine/directives";
 import { buildAIOpponentMatchPlan, sanitizeOpponentMatchPlan } from "@/engine/matchPlan";
 import { MATCH_TIME_SCALE } from "@/engine/matchClock";
 import { buildTacticalAnalytics, expectedGoalsAt } from "@/engine/tacticalAnalytics";
+import {
+  isPlayerAvailable,
+  matchStartingEnergy,
+  playerCondition,
+  playerSharpness,
+  postMatchCondition,
+  rollMatchInjury,
+} from "@/engine/fitness";
 import {
   directivesForPlayerRole,
   playerRoleLabel,
@@ -157,8 +166,11 @@ interface SimPlayer {
   runUntil: number;
   /** 1=fresh; high pressing and repeated sprints reduce it */
   energy: number;
+  conditionBefore: number;
   rating: number;
+  /** unavailable to simulation (red card or injury); telemetry distinguishes them */
   sentOff: boolean;
+  injured: boolean;
   yellow: boolean;
   goals: number;
   assists: number;
@@ -403,6 +415,7 @@ export interface LineupEntry {
   goals: number;
   yellow: boolean;
   sentOff: boolean;
+  injured: boolean;
 }
 
 function emptyStats(): MatchStats {
@@ -431,6 +444,7 @@ export class MatchSimulator {
   readonly home: TeamSide;
   readonly away: TeamSide;
   private rng: SeededRNG;
+  private injuryRng: SeededRNG;
   private worldScale: number;
   private worldTime = 0;
 
@@ -474,6 +488,8 @@ export class MatchSimulator {
   private telemetry = new Map<string, PlayerTelemetryRuntime>();
   private nextHeatmapSampleAt = 0;
   private tacticalChanges: TacticalChangeRecord[] = [];
+  private injuries: MatchInjuryRecord[] = [];
+  private nextInjuryCheckAt = 7 * 60;
   private tacticalEvents: TacticalEvent[] = [];
   private tacticalEventCounter = 0;
   private possessionId = 1;
@@ -507,6 +523,8 @@ export class MatchSimulator {
     this.home = home;
     this.away = away;
     this.rng = new SeededRNG(options.seed);
+    this.injuryRng = new SeededRNG((options.seed ^ 0x49a71c) >>> 0);
+    this.nextInjuryCheckAt = this.injuryRng.float(6, 12) * 60;
     this.worldScale = options.worldScale ?? 0.5;
     this.difficulty = options.difficulty ?? Difficulty.SemiPro;
     this.coachProfile = getAICoachProfile(this.difficulty);
@@ -578,7 +596,14 @@ export class MatchSimulator {
           side.tactics.playStyle,
         ),
         number: side.displayNumbers[i] ?? p.shirtNumber,
-        tackleCd: 0, runUntil: 0, energy: 1, rating: 6.5, sentOff: false, yellow: false,
+        tackleCd: 0,
+        runUntil: 0,
+        energy: matchStartingEnergy(p),
+        conditionBefore: playerCondition(p),
+        rating: 6.5,
+        sentOff: false,
+        injured: false,
+        yellow: false,
         goals: 0, assists: 0,
       };
     });
@@ -604,6 +629,8 @@ export class MatchSimulator {
         minuteOff: minute,
         minutesPlayed: 0,
         rating: 6.5,
+        conditionBefore: sp.conditionBefore,
+        conditionAfter: sp.conditionBefore,
         touches: 0,
         carries: 0,
         passesAttempted: 0,
@@ -661,7 +688,7 @@ export class MatchSimulator {
     runtime.data.goals = sp.goals;
     runtime.data.assists = sp.assists;
     runtime.data.yellowCards = sp.yellow ? 1 : 0;
-    runtime.data.redCards = sp.sentOff ? 1 : 0;
+    runtime.data.redCards = sp.sentOff && !sp.injured ? 1 : 0;
     runtime.data.position = sp.role;
     runtime.data.tacticalRole = sp.roleAssignment.role;
     runtime.data.duty = sp.roleAssignment.duty;
@@ -669,6 +696,13 @@ export class MatchSimulator {
       runtime.data.minuteOff = Math.max(runtime.data.minuteOn, Math.floor(this.gameTime / 60));
       runtime.data.minutesPlayed = Math.max(1, Math.round(runtime.secondsPlayed / 60));
     }
+    runtime.data.conditionAfter = postMatchCondition(
+      sp.conditionBefore,
+      runtime.data.minutesPlayed,
+      runtime.data.distanceCoveredKm,
+      runtime.data.sprints,
+      sp.p.naturalFitness,
+    );
     if (deactivate) runtime.active = false;
   }
 
@@ -735,6 +769,7 @@ export class MatchSimulator {
       tacticalEvents,
       teamSummaries: tacticalAnalytics.teamSummaries,
       passNetworks: tacticalAnalytics.passNetworks,
+      injuries: this.injuries.map((injury) => ({ ...injury })),
       initialHomePlayStyle: this.initialPlayStyles.home,
       initialAwayPlayStyle: this.initialPlayStyles.away,
       finalHomePlayStyle: this.home.tactics.playStyle,
@@ -1146,8 +1181,67 @@ export class MatchSimulator {
         this.tickMovement(dtWorld, false);
     }
 
+    this.tickInjuries();
     this.tickAIManager();
     this.pendingState = true;
+  }
+
+  private tickInjuries(): void {
+    if (this.gameTime < this.nextInjuryCheckAt || this.gameTime >= 5340) return;
+    this.nextInjuryCheckAt = this.gameTime + this.injuryRng.float(8, 15) * 60;
+    const candidates = (["home", "away"] as Side[]).flatMap((side) =>
+      this.players(side)
+        .map((player, idx) => ({ side, player, idx }))
+        .filter(({ player }) => !player.sentOff),
+    );
+    if (candidates.length === 0) return;
+    const averageRisk = candidates.reduce((sum, { player }) => {
+      const conditionRisk = Math.max(0, 80 - player.conditionBefore) * 0.0012;
+      const fatigueRisk = Math.max(0, 0.82 - player.energy) * 0.18;
+      const ageRisk = Math.max(0, player.p.age - 30) * 0.002;
+      return sum + 0.035 + conditionRisk + fatigueRisk + ageRisk;
+    }, 0) / candidates.length;
+    if (!this.injuryRng.chance(clamp(averageRisk, 0.025, 0.14))) return;
+
+    const selected = this.injuryRng.weighted(candidates.map((candidate) => {
+      const { player } = candidate;
+      const vulnerability = 1 + Math.max(0, 82 - player.conditionBefore) * 0.06 +
+        Math.max(0, 0.86 - player.energy) * 7 + Math.max(0, player.p.age - 29) * 0.08;
+      return [candidate, vulnerability] as [typeof candidate, number];
+    }));
+    const rolled = rollMatchInjury(selected.player.p, this.injuryRng);
+    const team = this.team(selected.side);
+    this.injuries.push({
+      ...rolled,
+      clubId: team.clubId,
+      side: selected.side,
+      minute: Math.floor(this.gameTime / 60),
+    });
+    selected.player.injured = true;
+    selected.player.sentOff = true;
+    selected.player.energy = Math.min(selected.player.energy, 0.55);
+    selected.player.vx = 0;
+    selected.player.vy = 0;
+    this.syncTelemetry(selected.player, true);
+    if (this.carrier?.side === selected.side && this.carrier.i === selected.idx) {
+      this.carrier = null;
+      this.looseBallVelocity = { x: 0, y: 0 };
+    }
+    this.stoppage += this.injuryRng.int(35, 100);
+    this.pushEvent(
+      MatchEventType.Injury,
+      team.clubId,
+      selected.player.p.id,
+      `${selected.player.p.firstName} ${selected.player.p.lastName} has suffered a ${rolled.name.toLowerCase()}`,
+    );
+
+    if (!team.isUserTeam && this.subsUsed[selected.side] < 5) {
+      const benchIndex = team.bench
+        .map((player, idx) => ({ player, idx, score: roleFitScore(player, selected.player.role) }))
+        .filter(({ player }) => isPlayerAvailable(player) && !this.players(selected.side).some((active) => active.p.id === player.id))
+        .sort((a, b) => b.score - a.score)[0]?.idx;
+      if (benchIndex !== undefined) this.substitute(selected.side, selected.idx, benchIndex);
+    }
   }
 
   private finishMatch(): void {
@@ -1230,7 +1324,8 @@ export class MatchSimulator {
       rating: Number(sp.rating.toFixed(1)),
       goals: sp.goals,
       yellow: sp.yellow,
-      sentOff: sp.sentOff,
+      sentOff: sp.sentOff && !sp.injured,
+      injured: sp.injured,
     }));
   }
 
@@ -1263,7 +1358,8 @@ export class MatchSimulator {
     const target = players[starterIdx];
     const benchPlayer = team.bench[benchIdx];
     if (!target || !benchPlayer) return false;
-    if (target.sentOff) return false;
+    if (target.sentOff && !target.injured) return false;
+    if (!isPlayerAvailable(benchPlayer)) return false;
     if (this.substitutedOut.has(benchPlayer.id)) return false;
     if (players.some((sp) => sp.p.id === benchPlayer.id)) return false;
 
@@ -1279,7 +1375,8 @@ export class MatchSimulator {
     this.mergedDirectiveCache[side].delete(outgoingId);
     this.mergedDirectiveCache[side].delete(benchPlayer.id);
     target.rating = 6.5;
-    target.energy = 1;
+    target.conditionBefore = playerCondition(benchPlayer);
+    target.energy = matchStartingEnergy(benchPlayer);
     target.runUntil = 0;
     target.vx = 0;
     target.vy = 0;
@@ -1287,6 +1384,7 @@ export class MatchSimulator {
     target.nextTouchAt = this.worldTime;
     target.lastKnockOnAt = -Infinity;
     target.sentOff = false;
+    target.injured = false;
     target.yellow = false;
     target.goals = 0;
     target.assists = 0;
@@ -4908,7 +5006,10 @@ export function selectBestXI(
 } {
   const formation = getFormation(formationName);
   const slots = formation.positions;
-  const available = [...squad];
+  // Medical absences are hard availability constraints, not a rating penalty.
+  // Depleted/imported squads may therefore start short rather than field an
+  // injured player.
+  const available = squad.filter(isPlayerAvailable);
 
   const positionFit = (p: Player, role: string): number => {
     const target = ROLE_TO_POSITION[role] ?? "CM";
@@ -4934,7 +5035,8 @@ export function selectBestXI(
       const fit = positionFit(p, s.role);
       if (fit === 0 && s.role === "GK") return;
       if (fit === 0 && p.primaryPosition === "GK") return;
-      const score = fit * 100 + attrScore(p, s.role) + p.pace * 0.2;
+      const readiness = playerCondition(p) * 0.05 + playerSharpness(p) * 0.025;
+      const score = fit * 100 + attrScore(p, s.role) + p.pace * 0.2 + readiness;
       if (score > bestScore) {
         bestScore = score;
         bestIdx = idx;
@@ -4968,7 +5070,8 @@ export function selectBestXI(
     const aGK = a.primaryPosition === "GK" ? 1 : 0;
     const bGK = b.primaryPosition === "GK" ? 1 : 0;
     if (aGK !== bGK) return bGK - aGK;
-    return b.reputation - a.reputation;
+    return (b.reputation + playerCondition(b) * 0.12 + playerSharpness(b) * 0.05) -
+      (a.reputation + playerCondition(a) * 0.12 + playerSharpness(a) * 0.05);
   });
 
   return { starters, bench: bench.slice(0, 7), roles, basePositions };

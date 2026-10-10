@@ -15,6 +15,7 @@ import type {
 import { Difficulty } from "@/types";
 import { SeededRNG, clamp } from "@/database/rng";
 import { generateFixtureList, simulateQuickMatch } from "@/engine/leagueEngine";
+import { isPlayerAvailable, playerCondition, playerSharpness } from "@/engine/fitness";
 import { generateCupRound1, generateNextCupRound, cupChampion, CUP_ID } from "@/engine/cupEngine";
 import {
   CONTINENTAL_ID,
@@ -135,12 +136,15 @@ export function applyQuickMatchPlayerStats(
   rng: SeededRNG,
 ): void {
   if (squad.length === 0) return;
-  const keepers = squad
+  const selectionPool = squad.filter(isPlayerAvailable);
+  if (selectionPool.length === 0) return;
+  const readinessScore = (player: Player) => quickRoleScore(player) + playerCondition(player) * 0.08 + playerSharpness(player) * 0.04;
+  const keepers = selectionPool
     .filter((player) => player.primaryPosition === "GK")
-    .sort((a, b) => quickRoleScore(b) - quickRoleScore(a));
-  const outfield = squad
+    .sort((a, b) => readinessScore(b) - readinessScore(a));
+  const outfield = selectionPool
     .filter((player) => player.primaryPosition !== "GK")
-    .sort((a, b) => quickRoleScore(b) - quickRoleScore(a));
+    .sort((a, b) => readinessScore(b) - readinessScore(a));
   const lineup = [...(keepers[0] ? [keepers[0]] : []), ...outfield.slice(0, keepers[0] ? 10 : 11)];
   if (lineup.length === 0) return;
 
@@ -173,6 +177,13 @@ export function applyQuickMatchPlayerStats(
       4.5,
       9.5,
     ).toFixed(1));
+    const workloadVariance = player.id.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % 7;
+    player.condition = Number(clamp(
+      playerCondition(player) - 18 - workloadVariance + (player.naturalFitness - 10) * 0.2,
+      28,
+      100,
+    ).toFixed(1));
+    player.matchSharpness = Number(clamp(playerSharpness(player) + 7, 0, 100).toFixed(1));
   }
 }
 

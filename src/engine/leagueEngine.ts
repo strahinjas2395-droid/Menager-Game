@@ -5,6 +5,7 @@
 import type { Club, Fixture, Player, Standing } from "@/types";
 import { CompetitionType } from "@/types";
 import { SeededRNG, clamp } from "@/database/rng";
+import { isPlayerAvailable, playerCondition, playerSharpness } from "@/engine/fitness";
 
 /** Generic internal ability score (NOT shown to the user as an "overall"). */
 export function playerStrength(p: Player): number {
@@ -17,10 +18,17 @@ export function playerStrength(p: Player): number {
 /** Strength of the best XI available (starters by ability). */
 export function teamStrength(squad: Player[]): number {
   if (squad.length === 0) return 8;
-  const sorted = [...squad].sort((a, b) => playerStrength(b) - playerStrength(a));
+  const readyStrength = (player: Player): number => {
+    const readiness = 0.76 + playerCondition(player) * 0.0017 + playerSharpness(player) * 0.001;
+    return playerStrength(player) * readiness;
+  };
+  const fit = squad.filter(isPlayerAvailable);
+  if (fit.length === 0) return 4;
+  const sorted = [...fit].sort((a, b) => readyStrength(b) - readyStrength(a));
   const xi = sorted.slice(0, 11);
-  const sum = xi.reduce((s, p) => s + playerStrength(p), 0);
-  return sum / xi.length;
+  const sum = xi.reduce((total, player) => total + readyStrength(player), 0);
+  const shortageFactor = 0.55 + 0.45 * Math.min(1, xi.length / 11);
+  return (sum / xi.length) * shortageFactor;
 }
 
 /** Poisson sample with mean lambda. */

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { X, ArrowUpDown } from "lucide-react";
+import { X, ArrowUpDown, Activity, Dumbbell, HeartPulse } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import TopBar from "@/components/TopBar";
 import { useGameStore } from "@/store/gameStore";
@@ -9,10 +9,24 @@ import { NATIONALITY_FLAGS } from "@/database/nameGenerator";
 import {
   DEFENSIVE_ATTRS, GK_ATTRS, MENTAL_ATTRS, PHYSICAL_ATTRS, TECHNICAL_ATTRS,
 } from "@/database/playerGenerator";
-import { PrimaryPosition, type Player } from "@/types";
+import {
+  PrimaryPosition,
+  type Player,
+  type TeamTrainingFocus,
+  type TrainingDevelopmentFocus,
+  type TrainingIntensity,
+} from "@/types";
+import { isPlayerAvailable, playerCondition, playerSharpness } from "@/engine/fitness";
 
 type Filter = "ALL" | "GK" | "DEF" | "MID" | "FWD";
-type SortKey = "number" | "position" | "age" | "name";
+type SortKey = "number" | "position" | "age" | "name" | "condition";
+
+const TRAINING_FOCUSES: TeamTrainingFocus[] = [
+  "Balanced", "Recovery", "Attacking", "Defending", "Possession", "Physical", "SetPieces",
+];
+const INDIVIDUAL_FOCUSES: TrainingDevelopmentFocus[] = [
+  "Attacking", "Defending", "Possession", "Physical", "SetPieces",
+];
 
 const POS_GROUP: Record<PrimaryPosition, Filter> = {
   [PrimaryPosition.GK]: "GK",
@@ -51,6 +65,9 @@ const POS_ORDER: Record<string, number> = {
 export default function SquadPage() {
   const save = useGameStore((s) => s.save);
   const replaceSave = useGameStore((s) => s.replaceSave);
+  const updateTrainingPlan = useGameStore((s) => s.updateTrainingPlan);
+  const togglePlayerRest = useGameStore((s) => s.togglePlayerRest);
+  const setIndividualTraining = useGameStore((s) => s.setIndividualTraining);
   const [filter, setFilter] = useState<Filter>("ALL");
   const [sort, setSort] = useState<SortKey>("position");
   const [selected, setSelected] = useState<Player | null>(null);
@@ -76,6 +93,7 @@ export default function SquadPage() {
         case "number": return a.shirtNumber - b.shirtNumber;
         case "age": return a.age - b.age;
         case "name": return a.lastName.localeCompare(b.lastName);
+        case "condition": return playerCondition(a) - playerCondition(b);
         default:
           return (
             (POS_ORDER[a.primaryPosition] ?? 9) - (POS_ORDER[b.primaryPosition] ?? 9) ||
@@ -97,6 +115,18 @@ export default function SquadPage() {
   const club = save.world.clubs[save.userClubId]!;
   const wageBill = players.reduce((s, p) => s + p.contract.weeklyWage, 0);
   const takenNumbers = new Set(players.map((p) => p.shirtNumber));
+  const trainingPlan = save.trainingPlan ?? {
+    intensity: "Normal" as TrainingIntensity,
+    teamFocus: "Balanced" as TeamTrainingFocus,
+    restPlayerIds: [],
+    individualFocus: {},
+  };
+  const resting = new Set(trainingPlan.restPlayerIds);
+  const injuredPlayers = players.filter((player) => !isPlayerAvailable(player));
+  const averageCondition = players.length
+    ? Math.round(players.reduce((sum, player) => sum + playerCondition(player), 0) / players.length)
+    : 0;
+  const latestTraining = save.trainingHistory?.at(-1);
 
   const confirmNumber = async (p: Player, n: number) => {
     const target = save.world.players[p.id];
@@ -128,9 +158,59 @@ export default function SquadPage() {
               <option value="number" className="bg-card">Number</option>
               <option value="age" className="bg-card">Age</option>
               <option value="name" className="bg-card">Name</option>
+              <option value="condition" className="bg-card">Lowest condition</option>
             </select>
           </label>
         </div>
+
+        <section className="mb-3 rounded-xl border border-gold/20 bg-card p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Dumbbell size={16} className="text-gold" />
+              <div>
+                <h2 className="text-xs font-black">Weekly Training & Recovery</h2>
+                <p className="text-[9px] text-white/40">Facilities {club.facilities.training}/10 · changes apply when the week advances</p>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm font-black text-green-300">{averageCondition}%</div>
+              <div className="text-[8px] uppercase text-white/35">avg condition</div>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <label className="rounded-lg bg-navy/60 p-2 text-[9px] font-bold uppercase tracking-wide text-white/40">
+              Team focus
+              <select
+                value={trainingPlan.teamFocus}
+                onChange={(event) => void updateTrainingPlan({ teamFocus: event.target.value as TeamTrainingFocus })}
+                className="mt-1 w-full bg-transparent text-xs font-bold normal-case text-white outline-none"
+              >
+                {TRAINING_FOCUSES.map((focus) => <option key={focus} value={focus} className="bg-card">{focus}</option>)}
+              </select>
+            </label>
+            <label className="rounded-lg bg-navy/60 p-2 text-[9px] font-bold uppercase tracking-wide text-white/40">
+              Intensity
+              <select
+                value={trainingPlan.intensity}
+                onChange={(event) => void updateTrainingPlan({ intensity: event.target.value as TrainingIntensity })}
+                className="mt-1 w-full bg-transparent text-xs font-bold normal-case text-white outline-none"
+              >
+                {(["Low", "Normal", "High"] as TrainingIntensity[]).map((intensity) => (
+                  <option key={intensity} value={intensity} className="bg-card">{intensity}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-[9px] text-white/45">
+            <span><HeartPulse size={11} className="mr-1 inline text-orange-300" />{injuredPlayers.length} unavailable</span>
+            <span>{resting.size} resting · high intensity improves faster but raises injury risk</span>
+          </div>
+          {latestTraining && (
+            <div className="mt-2 rounded-md bg-navy/50 px-2 py-1.5 text-[9px] text-white/40">
+              Week {latestTraining.week}: {latestTraining.developed.length} attribute gain{latestTraining.developed.length === 1 ? "" : "s"} · {latestTraining.returned.length} returned · {latestTraining.injuries.length} training injur{latestTraining.injuries.length === 1 ? "y" : "ies"}
+            </div>
+          )}
+        </section>
 
         <div className="mb-3 flex gap-2">
           {(["ALL", "GK", "DEF", "MID", "FWD"] as Filter[]).map((f) => (
@@ -149,30 +229,46 @@ export default function SquadPage() {
         <div className="space-y-1.5">
           {filtered.map((p) => {
             const group = POS_GROUP[p.primaryPosition];
+            const condition = playerCondition(p);
+            const rested = resting.has(p.id);
             return (
-              <button
+              <div
                 key={p.id}
-                onClick={() => setSelected(p)}
-                className="flex w-full items-center gap-3 rounded-xl border border-white/10 bg-card px-3 py-2.5 text-left transition hover:border-gold/50"
+                className={`flex w-full items-stretch overflow-hidden rounded-xl border bg-card transition ${
+                  p.injury ? "border-red-400/35" : rested ? "border-sky-400/30" : "border-white/10"
+                }`}
               >
-                <span className="w-7 shrink-0 text-center text-sm font-black text-gold">
-                  {p.shirtNumber}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold">
-                    {p.firstName} {p.lastName}
+                <button
+                  onClick={() => setSelected(p)}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 text-left hover:bg-white/[0.02]"
+                >
+                  <span className="w-7 shrink-0 text-center text-sm font-black text-gold">{p.shirtNumber}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5 truncate text-sm font-semibold">
+                      <span className="truncate">{p.firstName} {p.lastName}</span>
+                      {p.injury && <span className="shrink-0 rounded bg-red-400/15 px-1 text-[8px] text-red-300">OUT {p.injury.weeksRemaining}W</span>}
+                    </span>
+                    <span className="block text-[10px] text-white/40">
+                      {NATIONALITY_FLAGS[p.nationality] ?? ""} {p.age} yrs · sharp {Math.round(playerSharpness(p))}%
+                    </span>
                   </span>
-                  <span className="block text-[11px] text-white/45">
-                    {NATIONALITY_FLAGS[p.nationality] ?? ""} {p.age} yrs · {p.playstyles[0] ?? ""}
+                  <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-bold ${BADGE[group]}`}>{p.primaryPosition}</span>
+                  <span className="w-10 shrink-0 text-right">
+                    <span className={`block text-xs font-black ${condition >= 85 ? "text-green-300" : condition >= 70 ? "text-yellow-300" : "text-red-300"}`}>{Math.round(condition)}%</span>
+                    <span className="block text-[7px] uppercase text-white/30">condition</span>
                   </span>
-                </span>
-                <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${BADGE[group]}`}>
-                  {p.primaryPosition}
-                </span>
-                <span className="w-8 shrink-0 text-right text-[11px] text-white/50">
-                  {p.seasonStats.appearances}app
-                </span>
-              </button>
+                </button>
+                <button
+                  onClick={() => void togglePlayerRest(p.id)}
+                  disabled={!!p.injury}
+                  title={rested ? "Return to training" : "Rest this player for the next training week"}
+                  className={`w-12 shrink-0 border-l text-[8px] font-black uppercase transition disabled:opacity-25 ${
+                    rested ? "border-sky-300/30 bg-sky-400/15 text-sky-200" : "border-white/10 text-white/35 hover:bg-white/5"
+                  }`}
+                >
+                  {rested ? "Resting" : "Rest"}
+                </button>
+              </div>
             );
           })}
         </div>
@@ -221,6 +317,48 @@ export default function SquadPage() {
               <Box label="Value" value={`€${(selected.contract.transferValue / 1_000_000).toFixed(1)}M`} />
               <Box label="Wage" value={`€${(selected.contract.weeklyWage / 1000).toFixed(1)}k/w`} />
               <Box label="Contract" value={`${selected.contract.contractYearsRemaining}y`} />
+            </div>
+
+            <div className="mt-3 rounded-xl border border-white/10 bg-card p-3">
+              <div className="flex items-center gap-2"><Activity size={14} className="text-green-300" /><span className="stat-label">Readiness & availability</span></div>
+              <div className="mt-2 grid grid-cols-2 gap-3">
+                <ReadinessBar label="Condition" value={playerCondition(selected)} />
+                <ReadinessBar label="Sharpness" value={playerSharpness(selected)} />
+              </div>
+              {selected.injury ? (
+                <div className="mt-3 rounded-lg border border-red-400/25 bg-red-400/10 p-2.5">
+                  <div className="text-xs font-black text-red-200">{selected.injury.name}</div>
+                  <div className="mt-1 text-[10px] text-red-100/60">
+                    {selected.injury.severity} · {selected.injury.source} · {selected.injury.weeksRemaining} week{selected.injury.weeksRemaining === 1 ? "" : "s"} remaining
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/20">
+                    <div className="h-full bg-red-300" style={{ width: `${selected.injury.rehabProgress * 100}%` }} />
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                  <label className="rounded-lg bg-navy/50 px-2 py-1.5 text-[9px] uppercase text-white/35">
+                    Individual focus
+                    <select
+                      value={trainingPlan.individualFocus[selected.id] ?? ""}
+                      onChange={(event) => void setIndividualTraining(
+                        selected.id,
+                        (event.target.value || undefined) as TrainingDevelopmentFocus | undefined,
+                      )}
+                      className="mt-0.5 block w-full bg-transparent text-[11px] font-bold normal-case text-white outline-none"
+                    >
+                      <option value="" className="bg-card">Follow team</option>
+                      {INDIVIDUAL_FOCUSES.map((focus) => <option key={focus} value={focus} className="bg-card">{focus}</option>)}
+                    </select>
+                  </label>
+                  <button
+                    onClick={() => void togglePlayerRest(selected.id)}
+                    className={`rounded-lg px-3 text-[10px] font-bold ${resting.has(selected.id) ? "bg-sky-400 text-navy" : "bg-white/10 text-white/60"}`}
+                  >
+                    {resting.has(selected.id) ? "Resting" : "Rest week"}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* stats */}
@@ -340,6 +478,18 @@ export default function SquadPage() {
 
       <BottomNav />
     </main>
+  );
+}
+
+function ReadinessBar({ label, value }: { label: string; value: number }) {
+  const color = value >= 85 ? "bg-green-400" : value >= 70 ? "bg-yellow-400" : "bg-red-400";
+  return (
+    <div>
+      <div className="flex justify-between text-[9px] font-bold text-white/45"><span>{label}</span><span>{Math.round(value)}%</span></div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${value}%` }} />
+      </div>
+    </div>
   );
 }
 

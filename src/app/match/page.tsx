@@ -1160,6 +1160,7 @@ function LineupCol({
           {e.goals > 0 && <span className="text-gold">⚽{e.goals}</span>}
           {e.yellow && <span className="text-yellow-400">▮</span>}
           {e.sentOff && <span className="text-red-500">■</span>}
+          {e.injured && <span className="text-orange-300" title="Injured">✚</span>}
           <span className="w-6 shrink-0 text-gold/90">{e.rating.toFixed(1)}</span>
         </li>
       ))}

@@ -196,6 +196,25 @@ export interface PlayerContract {
   transferValue: number;
 }
 
+export type InjurySeverity = "Knock" | "Minor" | "Moderate" | "Serious";
+export type InjurySource = "match" | "training";
+export type TrainingDevelopmentFocus = "Attacking" | "Defending" | "Possession" | "Physical" | "SetPieces";
+export type TeamTrainingFocus = "Balanced" | "Recovery" | TrainingDevelopmentFocus;
+export type TrainingIntensity = "Low" | "Normal" | "High";
+
+export interface PlayerInjury {
+  id: string;
+  name: string;
+  bodyArea: string;
+  severity: InjurySeverity;
+  source: InjurySource;
+  occurredSeason: number;
+  occurredWeek: number;
+  totalWeeks: number;
+  weeksRemaining: number;
+  rehabProgress: number;
+}
+
 export interface Player {
   // Identity
   id: string;
@@ -281,6 +300,14 @@ export interface Player {
   contract: PlayerContract;
 
   // Personal
+  /** 0-100 physical readiness; optional only for careers saved before fitness existed. */
+  condition?: number;
+  /** 0-100 match rhythm built through training and appearances. */
+  matchSharpness?: number;
+  /** Active medical absence; null/omitted means available. */
+  injury?: PlayerInjury | null;
+  /** Accumulated focus work used for gradual, attribute-specific development. */
+  trainingProgress?: Partial<Record<TrainingDevelopmentFocus, number>>;
   /** 0-100 */
   morale: number;
   personality: Personality;
@@ -671,6 +698,8 @@ export interface PlayerMatchAnalysis {
   minuteOff: number;
   minutesPlayed: number;
   rating: number;
+  conditionBefore?: number;
+  conditionAfter?: number;
   touches: number;
   carries: number;
   passesAttempted: number;
@@ -793,6 +822,18 @@ export interface PassNetworkEdge {
   progressive: number;
 }
 
+export interface MatchInjuryRecord {
+  playerId: string;
+  playerName: string;
+  clubId: string;
+  side: "home" | "away";
+  minute: number;
+  name: string;
+  bodyArea: string;
+  severity: InjurySeverity;
+  recoveryWeeks: number;
+}
+
 export interface TacticalChangeRecord {
   side: "home" | "away";
   clubId: string;
@@ -829,6 +870,7 @@ export interface MatchAnalysis {
     home: PassNetworkEdge[];
     away: PassNetworkEdge[];
   };
+  injuries?: MatchInjuryRecord[];
   initialHomePlayStyle?: PlayStyle;
   initialAwayPlayStyle?: PlayStyle;
   finalHomePlayStyle?: PlayStyle;
@@ -959,6 +1001,26 @@ export interface PersistentManagerMemory {
   confidence: number;
 }
 
+export interface TrainingPlan {
+  intensity: TrainingIntensity;
+  teamFocus: TeamTrainingFocus;
+  /** Exact players excused from normal work for this week's recovery. */
+  restPlayerIds: string[];
+  /** Optional identity-bound individual development work. */
+  individualFocus: Record<string, TrainingDevelopmentFocus>;
+  /** Guards imported/replayed state from processing one calendar week twice. */
+  lastProcessed?: string;
+}
+
+export interface TrainingWeekReport {
+  seasonYear: number;
+  week: number;
+  conditionImproved: string[];
+  developed: { playerId: string; attribute: string; amount: number }[];
+  injuries: string[];
+  returned: string[];
+}
+
 export interface GameSave {
   version: number;
   seed: number;
@@ -979,6 +1041,9 @@ export interface GameSave {
   opponentPlans?: Record<string, OpponentMatchPlan>;
   /** Knowledge accumulated by exact AI manager identity. Optional for older careers. */
   managerMemories?: Record<string, PersistentManagerMemory>;
+  /** Weekly workload and development configuration. Optional for older careers. */
+  trainingPlan?: TrainingPlan;
+  trainingHistory?: TrainingWeekReport[];
   settings: GameSettings;
   savedAt: number;
 }

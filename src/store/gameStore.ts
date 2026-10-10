@@ -25,6 +25,9 @@ import {
   type OpponentMatchPlan,
   type Player,
   type TacticalSetup,
+  type TeamTrainingFocus,
+  type TrainingDevelopmentFocus,
+  type TrainingIntensity,
 } from "@/types";
 import { randomSeed, SeededRNG, clamp } from "@/database/rng";
 import { generateAllLeagues, hashStr } from "@/database/leagueGenerator";
@@ -34,6 +37,16 @@ import { buildTeamSide, type TeamSide } from "@/engine/matchSimulator";
 import { buildInstructionRoster, compileInstructionPlans } from "@/engine/directives";
 import { sanitizeOpponentMatchPlan } from "@/engine/matchPlan";
 import { adaptTacticsToManagerMemory, rememberManagerMatch } from "@/engine/managerMemory";
+import {
+  applyMatchLoad,
+  defaultTrainingPlan,
+  injuryFromMatchRecord,
+  isPlayerAvailable,
+  normalizeWorldFitness,
+  playerCondition,
+  playerSharpness,
+  processWeeklyTraining,
+} from "@/engine/fitness";
 import { saveGame, loadGame, deleteSave } from "@/database/storage";
 import { aiTransferActivity } from "@/engine/transferEngine";
 import { CONTINENTAL_ID } from "@/engine/continentalEngine";
@@ -155,6 +168,9 @@ interface GameState {
   updateTactics: (t: TacticalSetup) => Promise<void>;
   updatePlayerInstructions: (instructions: Record<string, string>) => Promise<void>;
   updateOpponentPlan: (fixtureId: string, plan: OpponentMatchPlan) => Promise<OpponentMatchPlan | null>;
+  updateTrainingPlan: (changes: { intensity?: TrainingIntensity; teamFocus?: TeamTrainingFocus }) => Promise<void>;
+  togglePlayerRest: (playerId: string) => Promise<void>;
+  setIndividualTraining: (playerId: string, focus?: TrainingDevelopmentFocus) => Promise<void>;
   markAllInboxRead: () => void;
   addMessage: (subject: string, body: string) => void;
   saveNow: () => Promise<void>;
@@ -227,6 +243,42 @@ export const useGameStore = create<GameState>((set, get) => {
           read: false,
         });
       }
+    }
+
+    // Recovery, rehabilitation and training advance exactly once with each career week.
+    save.trainingPlan ??= defaultTrainingPlan();
+    save.trainingHistory ??= [];
+    const trainingReport = processWeeklyTraining(
+      save.world,
+      save.userClubId,
+      save.trainingPlan,
+      save.season.seasonYear,
+      week,
+      save.seed,
+    );
+    save.trainingHistory.push(trainingReport);
+    save.trainingHistory = save.trainingHistory.slice(-52);
+    for (const playerId of trainingReport.injuries) {
+      const player = save.world.players[playerId];
+      if (!player?.injury) continue;
+      save.inbox.unshift({
+        id: `msg-training-injury-${playerId}-${save.season.seasonYear}-${week}`,
+        week,
+        subject: `Training injury: ${player.firstName} ${player.lastName}`,
+        body: `${player.firstName} suffered a ${player.injury.name.toLowerCase()} and is expected out for ${player.injury.weeksRemaining} week${player.injury.weeksRemaining === 1 ? "" : "s"}.`,
+        read: false,
+      });
+    }
+    for (const playerId of trainingReport.returned) {
+      const player = save.world.players[playerId];
+      if (!player) continue;
+      save.inbox.unshift({
+        id: `msg-fitness-return-${playerId}-${save.season.seasonYear}-${week}`,
+        week,
+        subject: `${player.firstName} ${player.lastName} cleared to return`,
+        body: "The medical team has made the player available for selection. Match sharpness may still need rebuilding.",
+        read: false,
+      });
     }
 
     // season end
@@ -322,6 +374,8 @@ export const useGameStore = create<GameState>((set, get) => {
         results: {},
         opponentPlans: {},
         managerMemories: {},
+        trainingPlan: defaultTrainingPlan(),
+        trainingHistory: [],
         settings: { ...DEFAULT_SETTINGS },
         savedAt: Date.now(),
       };
@@ -333,6 +387,11 @@ export const useGameStore = create<GameState>((set, get) => {
     continueCareer: async () => {
       const existing = await loadGame();
       if (existing) {
+        existing.opponentPlans ??= {};
+        existing.managerMemories ??= {};
+        existing.trainingPlan ??= defaultTrainingPlan();
+        existing.trainingHistory ??= [];
+        normalizeWorldFitness(existing.world);
         set({ save: existing, saveExists: true, weekQueue: [] });
       }
     },
@@ -425,6 +484,20 @@ export const useGameStore = create<GameState>((set, get) => {
           p.seasonStats.assists += report.assists;
           p.seasonStats.yellowCards += report.yellowCards;
           p.seasonStats.redCards += report.redCards;
+          applyMatchLoad(p, report);
+        }
+        for (const injury of result.analysis.injuries ?? []) {
+          const player = save.world.players[injury.playerId];
+          if (!player) continue;
+          player.injury = injuryFromMatchRecord(injury, save.season.seasonYear, fixture.week);
+          player.condition = Math.min(playerCondition(player), 58);
+          save.inbox.unshift({
+            id: `msg-match-injury-${fixture.id}-${player.id}`,
+            week: fixture.week,
+            subject: `Injury update: ${player.firstName} ${player.lastName}`,
+            body: `${injury.name} — ${injury.severity.toLowerCase()}. The medical team expects ${injury.recoveryWeeks} week${injury.recoveryWeeks === 1 ? "" : "s"} of recovery.`,
+            read: false,
+          });
         }
       } else {
         const participants = Object.keys(result.ratings);
@@ -433,6 +506,8 @@ export const useGameStore = create<GameState>((set, get) => {
           if (!p) continue;
           p.seasonStats.appearances += 1;
           p.seasonStats.lastRating = result.ratings[pid];
+          p.condition = Number(clamp(playerCondition(p) - 18, 28, 100).toFixed(1));
+          p.matchSharpness = Number(clamp(playerSharpness(p) + 7, 0, 100).toFixed(1));
         }
         for (const e of result.events) {
           if (e.type === MatchEventType.Goal || e.type === MatchEventType.PenaltyGoal) {
@@ -532,6 +607,37 @@ export const useGameStore = create<GameState>((set, get) => {
       return sanitized;
     },
 
+    updateTrainingPlan: async (changes) => {
+      commit((save) => {
+        save.trainingPlan ??= defaultTrainingPlan();
+        if (changes.intensity) save.trainingPlan.intensity = changes.intensity;
+        if (changes.teamFocus) save.trainingPlan.teamFocus = changes.teamFocus;
+      });
+      await persist();
+    },
+
+    togglePlayerRest: async (playerId) => {
+      commit((save) => {
+        if (!save.world.clubs[save.userClubId]?.playerIds.includes(playerId)) return;
+        save.trainingPlan ??= defaultTrainingPlan();
+        const resting = new Set(save.trainingPlan.restPlayerIds);
+        if (resting.has(playerId)) resting.delete(playerId);
+        else resting.add(playerId);
+        save.trainingPlan.restPlayerIds = [...resting];
+      });
+      await persist();
+    },
+
+    setIndividualTraining: async (playerId, focus) => {
+      commit((save) => {
+        if (!save.world.clubs[save.userClubId]?.playerIds.includes(playerId)) return;
+        save.trainingPlan ??= defaultTrainingPlan();
+        if (focus) save.trainingPlan.individualFocus[playerId] = focus;
+        else delete save.trainingPlan.individualFocus[playerId];
+      });
+      await persist();
+    },
+
     markAllInboxRead: () => {
       commit((save) => {
         for (const m of save.inbox) m.read = true;
@@ -555,6 +661,9 @@ export const useGameStore = create<GameState>((set, get) => {
     },
 
     replaceSave: async (save) => {
+      save.trainingPlan ??= defaultTrainingPlan();
+      save.trainingHistory ??= [];
+      normalizeWorldFitness(save.world);
       set({ save: { ...save }, weekQueue: [], saveExists: true });
       await saveGame(save);
     },

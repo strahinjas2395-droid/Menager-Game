@@ -234,6 +234,14 @@ describe("core game loop (integration)", () => {
     expect(getMatchContext(store().save!, week1UserFixture.id)).toBeTruthy();
     store().save!.managerMemories = currentManagerMemories;
 
+    // Manager-controlled training/rest persists by exact player identity.
+    await store().updateTrainingPlan({ intensity: "High", teamFocus: "Possession" });
+    await store().togglePlayerRest(starterId);
+    await store().setIndividualTraining(starterId, "Physical");
+    expect(store().save!.trainingPlan).toMatchObject({ intensity: "High", teamFocus: "Possession" });
+    expect(store().save!.trainingPlan?.restPlayerIds).toContain(starterId);
+    expect(store().save!.trainingPlan?.individualFocus[starterId]).toBe("Physical");
+
     const buildResult = (fixtureId: string): MatchResult => {
       const s = store().save!;
       const fixture = s.world.fixtures[fixtureId];
@@ -274,6 +282,26 @@ describe("core game loop (integration)", () => {
     // Play like the UI does until we cross into week 8
     let guard = 0;
     let r = store().advanceWeek();
+    if (r.type === "match") {
+      const firstResult = buildResult(r.fixtureId);
+      const injuredId = Object.keys(firstResult.analysis!.players)[0];
+      firstResult.analysis!.injuries = [{
+        playerId: injuredId,
+        playerName: firstResult.analysis!.players[injuredId].playerName,
+        clubId,
+        side: week1UserFixture.homeClubId === clubId ? "home" : "away",
+        minute: 63,
+        name: "Hamstring strain",
+        bodyArea: "hamstring",
+        severity: "Moderate",
+        recoveryWeeks: 8,
+      }];
+      r = store().recordUserMatch(firstResult);
+      expect(store().save!.world.players[injuredId].injury).toMatchObject({
+        source: "match", name: "Hamstring strain",
+      });
+      expect(store().save!.world.players[injuredId].injury!.weeksRemaining).toBeGreaterThan(0);
+    }
     while (guard++ < 120) {
       if (r.type === "match") {
         r = store().recordUserMatch(buildResult(r.fixtureId));

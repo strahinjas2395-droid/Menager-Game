@@ -273,6 +273,20 @@ function MatchView({
             teamName={side === "home" ? homeName : awayName}
           />
 
+          {(selected.analysis.injuries?.length ?? 0) > 0 && (
+            <section className="card-panel mt-3 border-orange-400/25">
+              <div className="stat-label text-orange-300">Medical incidents</div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {selected.analysis.injuries!.map((injury) => (
+                  <div key={`${injury.playerId}-${injury.minute}`} className="rounded-lg bg-orange-400/[0.07] p-2.5">
+                    <div className="flex items-center justify-between gap-2 text-xs"><b>{injury.playerName}</b><span className="text-orange-200">{injury.minute}&apos;</span></div>
+                    <div className="mt-1 text-[10px] text-white/50">{injury.name} · {injury.severity} · {injury.recoveryWeeks} week{injury.recoveryWeeks === 1 ? "" : "s"}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           <section className="card-panel mt-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="stat-label text-gold">Player Reports</span>
@@ -543,6 +557,9 @@ function PlayerDetail({ player }: { player: PlayerMatchAnalysis }) {
           <h2 className="mt-1 text-lg font-black">{player.playerName}</h2>
           <p className="text-[10px] text-white/45">
             {player.position}{player.tacticalRole ? ` · ${playerRoleDefinition(player.tacticalRole).label} (${player.duty ?? "Support"})` : ""} · {player.started ? "Started" : `On ${player.minuteOn}'`} · {player.minutesPlayed} minutes
+            {player.conditionBefore !== undefined && player.conditionAfter !== undefined
+              ? ` · condition ${Math.round(player.conditionBefore)}→${Math.round(player.conditionAfter)}%`
+              : ""}
           </p>
         </div>
         <div className="rounded-xl bg-gold/10 px-3 py-2 text-center"><div className="text-[9px] uppercase text-white/35">Rating</div><div className="text-xl font-black text-gold">{player.rating.toFixed(1)}</div></div>
