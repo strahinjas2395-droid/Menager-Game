@@ -216,23 +216,29 @@ export function resolveTackle(
   defender: Player,
   attacker: Player,
   rng: SeededRNG,
+  style: "stayOnFeet" | "normal" | "hard" = "normal",
 ): TackleResult {
   const def = defender.tackling * 3 + defender.anticipation * 2 +
     (has(defender, PlaystyleTag.BallWinner) ? 6 : 0) +
     (has(defender, PlaystyleTag.Interceptor) ? 3 : 0);
   const att = attacker.dribbling * 2 + attacker.agility * 1 +
     (has(attacker, PlaystyleTag.PressResistant) ? 4 : 0);
-  const pWon = clamp(45 + (def - att) * 1.3, 15, 85);
+  // Style changes commitment and consequence, never the footballer's stored
+  // attributes. Waiting on the feet is safer; a hard challenge wins a little
+  // more often but materially raises foul/card exposure.
+  const pWon = clamp(45 + (def - att) * 1.3 + (style === "hard" ? 6 : style === "stayOnFeet" ? 2 : 0), 15, 89);
 
   if (rng.chance(pWon / 100)) return { won: true, foul: false, card: "none" };
 
   // Failed tackle -> possible foul
-  const foulP = clamp(0.15 + (defender.aggression * 2 + (20 - defender.tackling) * 1.5) / 100, 0.1, 0.6);
+  const baseFoul = 0.15 + (defender.aggression * 2 + (20 - defender.tackling) * 1.5) / 100;
+  const foulP = clamp(baseFoul * (style === "hard" ? 1.55 : style === "stayOnFeet" ? 0.42 : 1), 0.045, 0.78);
   if (rng.chance(foulP)) {
     let card: "none" | "yellow" | "red" = "none";
-    if (defender.aggression > 15 && rng.chance(0.12)) card = "red";
-    else if (defender.aggression > 10 && rng.chance(0.35)) card = "yellow";
-    else if (rng.chance(0.12)) card = "yellow";
+    const hard = style === "hard";
+    if (defender.aggression > 15 && rng.chance(hard ? 0.2 : 0.12)) card = "red";
+    else if (defender.aggression > 10 && rng.chance(hard ? 0.52 : 0.35)) card = "yellow";
+    else if (rng.chance(hard ? 0.25 : 0.12)) card = "yellow";
     return { won: false, foul: true, card };
   }
   return { won: false, foul: false, card: "none" };

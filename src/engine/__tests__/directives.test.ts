@@ -4,10 +4,12 @@ import {
   instructionContextFingerprint,
   parseInstructions,
   parseSquadInstructions,
+  sanitizeDirectives,
   summarizeDirectives,
   type InstructionRosterPlayer,
 } from "@/engine/directives";
-import type { Player, TacticalInstructionCache } from "@/types";
+import { BOOLEAN_INSTRUCTIONS, CHOICE_INSTRUCTIONS } from "@/engine/instructionCatalog";
+import type { Player, TacticalDirectives, TacticalInstructionCache } from "@/types";
 
 describe("individual-instruction tactical interpreter", () => {
   it("translates natural attacking instructions into structured decisions", () => {
@@ -129,5 +131,76 @@ describe("individual-instruction tactical interpreter", () => {
     expect(compileInstructionPlans(squad, "", cache, original).playerDirectives.lb)
       .toEqual({ defensiveDuty: true, forwardRuns: false });
     expect(compileInstructionPlans(squad, "", cache, changed).playerDirectives.lb).toBeUndefined();
+  });
+
+  it("validates every finite catalogue capability and rejects invented values", () => {
+    const complete: Record<string, unknown> = Object.fromEntries([
+      ...BOOLEAN_INSTRUCTIONS.map((entry, index) => [entry.key, index % 2 === 0]),
+      ...CHOICE_INSTRUCTIONS.map((entry) => [entry.key, entry.options.at(-1)!.value]),
+    ]);
+    complete.preferredTargetId = "nine";
+    complete.preferredTargetName = "Number Nine";
+    complete.targetPriority = 4;
+    complete.targetDelivery = "aerial";
+    complete.inventedSuperPower = true;
+
+    const validated = sanitizeDirectives(complete, new Set(["nine"]));
+    for (const entry of BOOLEAN_INSTRUCTIONS) expect(typeof validated[entry.key]).toBe("boolean");
+    for (const entry of CHOICE_INSTRUCTIONS) {
+      expect(validated[entry.key]).toBe(entry.options.at(-1)!.value);
+    }
+    expect(validated.targetPriority).toBe(1);
+    expect((validated as Record<string, unknown>).inventedSuperPower).toBeUndefined();
+    expect(sanitizeDirectives({ crossType: "teleport", pressTrigger: "sometimes-ish" }))
+      .toEqual({});
+  });
+
+  it("merges prose then catalogue then player values with individual final authority", () => {
+    const squad = [{ id: "nine", individualInstructions: "" }] as Player[];
+    const roster: InstructionRosterPlayer[] = [{
+      id: "nine", name: "Number Nine", firstName: "Number", lastName: "Nine",
+      squadNumber: 9, tacticalNumber: 9, position: "ST", role: "ST",
+    }];
+    const fingerprint = instructionContextFingerprint(roster);
+    const text = "press and run";
+    const cache: TacticalInstructionCache = {
+      players: {},
+      team: {
+        schemaVersion: 1,
+        input: text,
+        scope: "team",
+        contextFingerprint: fingerprint,
+        directives: { pressHard: true, supportRun: "runInBehind", passingRisk: "creative" },
+        assignments: [{
+          playerId: "nine",
+          playerName: "Number Nine",
+          directives: { shotSelection: "shootOnSight", pressHard: false },
+        }],
+        understood: [], unsupported: [], source: "local-ai", createdAt: 1,
+      },
+    };
+    const teamOverrides: TacticalDirectives = {
+      pressHard: false,
+      supportRun: "comeShort",
+      passingRisk: "safe",
+    };
+    const playerOverrides = {
+      nine: { pressHard: true, supportRun: "moveIntoChannels", shotSelection: "workIntoBox" } as TacticalDirectives,
+    };
+
+    const plans = compileInstructionPlans(
+      squad, text, cache, roster, teamOverrides, playerOverrides,
+    );
+    expect(plans.teamDirectives).toMatchObject({
+      pressHard: false,
+      supportRun: "comeShort",
+      passingRisk: "safe",
+    });
+    expect(plans.playerDirectives.nine).toMatchObject({
+      pressHard: true,
+      supportRun: "moveIntoChannels",
+      shotSelection: "workIntoBox",
+    });
+    expect(summarizeDirectives(plans.playerDirectives.nine)).toContain("Support movement: Move into channels");
   });
 });

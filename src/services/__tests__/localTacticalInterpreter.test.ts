@@ -196,6 +196,24 @@ describe("browser-local tactical semantic interpreter", () => {
     expect(embeddedBatchSizes[1]).toBe(1);
   });
 
+  it("maps categorical movement and transition meanings into the typed catalogue", async () => {
+    const result = await interpret({
+      text: "come toward the ball; when we lose it recover into our shape",
+      scope: "player",
+      subjectPlayerId: "forward-9",
+    }, embeddingFor((clause) => {
+      if (clause.includes("come toward")) return { intent: "choice:supportRun:comeShort" };
+      if (clause.includes("recover into")) return { intent: "choice:transitionDefense:regroup" };
+      return undefined;
+    }));
+
+    expect(result.directives).toMatchObject({
+      supportRun: "comeShort",
+      transitionDefense: "regroup",
+    });
+    expect(result.unsupported).toEqual([]);
+  });
+
   it("rejects an ambiguous shared role instead of choosing by roster order", () => {
     const sameRole = roster.slice(0, 2).map((player) => ({ ...player, tacticalRole: "Winger" as const }));
     expect(resolveMentionedPlayers("the winger should press", sameRole)).toEqual([]);

@@ -287,6 +287,28 @@ describe("actionResolver", () => {
     expect(specialistPenalties).toBeGreaterThan(plainPenalties + 100);
   });
 
+  it("turns tackling style into a real win-versus-discipline trade-off", () => {
+    const hardRng = new SeededRNG(7331);
+    const feetRng = new SeededRNG(7331);
+    const defender = P({ tackling: 11, anticipation: 11, aggression: 15 });
+    const carrier = P({ dribbling: 13, agility: 13 });
+    let hardWins = 0;
+    let hardFouls = 0;
+    let feetWins = 0;
+    let feetFouls = 0;
+    const N = 4000;
+    for (let i = 0; i < N; i++) {
+      const hard = resolveTackle(defender, carrier, hardRng, "hard");
+      const feet = resolveTackle(defender, carrier, feetRng, "stayOnFeet");
+      if (hard.won) hardWins++;
+      if (hard.foul) hardFouls++;
+      if (feet.won) feetWins++;
+      if (feet.foul) feetFouls++;
+    }
+    expect(hardWins).toBeGreaterThan(feetWins);
+    expect(hardFouls).toBeGreaterThan(feetFouls * 2);
+  });
+
   it("long-shot specialists score from range more often than poor shooters", () => {
     const goodRng = new SeededRNG(141);
     const badRng = new SeededRNG(141);

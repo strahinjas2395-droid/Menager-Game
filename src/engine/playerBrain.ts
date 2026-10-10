@@ -1,4 +1,4 @@
-import { PlayStyle, PlaystyleTag, type Player } from "@/types";
+import { PlayStyle, PlaystyleTag, type Player, type TacticalDirectives } from "@/types";
 import { clamp } from "@/database/rng";
 import { getIconicPrimeProfile } from "@/engine/iconicPrimeProfiles";
 
@@ -151,6 +151,8 @@ export interface SpatialBrainInput {
   cutInside: boolean;
   holdPosition: boolean;
   forwardRuns: boolean;
+  /** Full executable catalogue layered on the legacy movement booleans. */
+  instructions?: TacticalDirectives;
 }
 
 export interface SpatialBrainResult extends BrainPoint {
@@ -209,6 +211,7 @@ function clampPoint(point: BrainPoint): BrainPoint {
  */
 export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResult {
   const profile = styleBehavior(input.style);
+  const instructions = input.instructions ?? {};
   const prime = getIconicPrimeProfile(input.player);
   const primeRunBeyond = prime?.receiving.runBeyond ?? 0.5;
   const primeComeShort = prime?.receiving.comeShort ?? 0.5;
@@ -244,8 +247,10 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
     });
 
     const spaceReader = hasPlaystyle(input.player, PlaystyleTag.SpaceInterpreter);
-    const wantsRun = input.runActive || input.forwardRuns || spaceReader ||
-      (forwardRole && (profile.runBehind > 1.18 || primeRunBeyond > 0.72));
+    const explicitSupport = instructions.supportRun && instructions.supportRun !== "balanced";
+    const wantsRun = instructions.supportRun === "runInBehind" ||
+      (!explicitSupport && (input.runActive || input.forwardRuns || spaceReader ||
+        (forwardRole && (profile.runBehind > 1.18 || primeRunBeyond > 0.72))));
     if (wantsRun && forwardRole) {
       const line = secondLastDefenderX(input.opponents, dir);
       const startOnside = line - dir * 18;
@@ -256,19 +261,24 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
         x: dir > 0
           ? Math.min(input.current.x + beyond, startOnside)
           : Math.max(input.current.x - beyond, startOnside),
-        y: input.cutInside ? 325 + (input.current.y - 325) * 0.35 : input.current.y + laneSign * 24,
+        y: instructions.makeDecoyRuns
+          ? clamp(input.current.y + laneSign * 105, 45, 605)
+          : input.cutInside ? 325 + (input.current.y - 325) * 0.35 : input.current.y + laneSign * 24,
         intent: "runBehind",
-        bias: 9 * profile.runBehind + (spaceReader ? 8 : 0) + (primeRunBeyond - 0.5) * 18,
+        bias: 9 * profile.runBehind + (spaceReader ? 8 : 0) + (primeRunBeyond - 0.5) * 18 +
+          (instructions.supportRun === "runInBehind" ? 22 : 0) +
+          (instructions.makeDecoyRuns ? 6 : 0),
       });
     }
 
-    if ((fullBack || wideRole) && (profile.attackingWidth > 1.08 || input.stayWide ||
+    if ((fullBack || wideRole) && (instructions.flankRun === "overlap" || profile.attackingWidth > 1.08 || input.stayWide ||
       hasPlaystyle(input.player, PlaystyleTag.FullBackRunner) || hasPlaystyle(input.player, PlaystyleTag.Winger))) {
       candidates.push({
         x: Math.max(input.current.x * dir, carrier.x * dir + 75) * dir,
         y: input.current.y < 325 ? 42 : 608,
         intent: "overlap",
-        bias: 8 * profile.attackingWidth + (fullBack ? 3 : 0),
+        bias: 8 * profile.attackingWidth + (fullBack ? 3 : 0) +
+          (instructions.flankRun === "overlap" ? 22 : instructions.flankRun === "underlap" ? -12 : 0),
       });
     }
 
@@ -282,8 +292,8 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
     // defender. Explicit width instructions still favour the overlap above.
     const depthFromCarrier = (input.current.x - carrier.x) * dir;
     if (
-      carrierWide && sameFlank && !input.stayWide &&
-      (fullBack || ["RM", "LM", "CM", "CAM"].includes(input.role)) &&
+      carrierWide && sameFlank && (!input.stayWide || instructions.flankRun === "underlap") &&
+      (fullBack || wideRole || ["RM", "LM", "CM", "CAM"].includes(input.role)) &&
       depthFromCarrier > -220 && depthFromCarrier < 70
     ) {
       candidates.push({
@@ -292,7 +302,8 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
         intent: "underlap",
         bias: 9 + (input.cutInside ? 3 : 0) +
           (input.style === PlayStyle.TotalFootball || input.style === PlayStyle.TikiTaka ? 4 : 0) +
-          (hasPlaystyle(input.player, PlaystyleTag.FullBackRunner) ? 4 : 0),
+          (hasPlaystyle(input.player, PlaystyleTag.FullBackRunner) ? 4 : 0) +
+          (instructions.flankRun === "underlap" ? 24 : instructions.flankRun === "overlap" ? -10 : 0),
       });
     }
 
@@ -301,8 +312,8 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
     // lets possession teams escape a press through a third-player angle.
     const aheadOfCarrier = (input.current.x - carrier.x) * dir;
     if (
-      forwardRole && aheadOfCarrier > 45 && aheadOfCarrier < 300 &&
-      (carrierPressure < 72 || profile.circulation > 1.25 || primeComeShort > 0.72)
+      (forwardRole || instructions.supportRun === "comeShort") && aheadOfCarrier > 35 && aheadOfCarrier < 330 &&
+      (instructions.supportRun === "comeShort" || carrierPressure < 72 || profile.circulation > 1.25 || primeComeShort > 0.72)
     ) {
       candidates.push({
         x: carrier.x + dir * (58 + profile.supportDistance * 1.8),
@@ -310,20 +321,33 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
         intent: "comeShort",
         bias: 9 + (carrierPressure < 55 ? 7 : 0) + profile.circulation * 3 +
           (hasPlaystyle(input.player, PlaystyleTag.Playmaker) ? 4 : 0) +
-          (primeComeShort - 0.5) * 20,
+          (primeComeShort - 0.5) * 20 +
+          (instructions.supportRun === "comeShort" ? 24 : instructions.supportRun === "runInBehind" ? -12 : 0),
+      });
+    }
+
+    if (instructions.supportRun === "moveIntoChannels") {
+      const channelY = input.current.y <= 325 ? 205 : 445;
+      const line = secondLastDefenderX(input.opponents, dir);
+      candidates.push({
+        x: dir > 0 ? Math.min(carrier.x + 145, line - 18) : Math.max(carrier.x - 145, line + 18),
+        y: channelY,
+        intent: "runBehind",
+        bias: 29 + input.player.offTheBall * 0.25,
       });
     }
 
     // Once a short combination is played, runActive identifies the original
     // passer. They accelerate beyond the new carrier on a different lane: an
     // actual give-and-go continuation rather than a commentary-only event.
-    if (input.runActive && !input.holdPosition) {
+    if ((input.runActive || instructions.thirdManRuns) && !input.holdPosition &&
+      (instructions.supportRun !== "comeShort" || instructions.playOneTwos)) {
       candidates.push({
         x: carrier.x + dir * (88 + input.player.acceleration * 2.8),
         y: carrier.y + laneSign * 48,
         intent: "giveAndGo",
         bias: 17 + input.player.offTheBall * 0.35 + profile.circulation * 2 +
-          (primeCombination - 0.5) * 14,
+          (primeCombination - 0.5) * 14 + (instructions.thirdManRuns ? 10 : 0),
       });
     }
 
@@ -331,17 +355,41 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
     // far-post/penalty-spot run. Only forwards on the opposite/central lane are
     // eligible, preventing the whole side from abandoning rest defence.
     const oppositeOrCentral = Math.abs(input.current.y - 325) < 115 || !sameFlank;
-    if (carrierWide && carrierViewedX > 575 && forwardRole && oppositeOrCentral) {
+    if (carrierWide && carrierViewedX > 575 && forwardRole && oppositeOrCentral && instructions.boxRole !== "stayBack") {
       const line = secondLastDefenderX(input.opponents, dir);
       const onsideShoulder = line - dir * 16;
       const desiredX = carrier.x + dir * (95 + input.player.offTheBall * 2.4);
+      const boxY = instructions.boxRole === "nearPost"
+        ? carrier.y < 325 ? 238 : 412
+        : instructions.boxRole === "farPost"
+          ? carrier.y < 325 ? 455 : 195
+          : instructions.boxRole === "centre" ? 325 : carrier.y < 325 ? 445 : 205;
       candidates.push({
         x: dir > 0 ? Math.min(desiredX, onsideShoulder) : Math.max(desiredX, onsideShoulder),
-        y: carrier.y < 325 ? 445 : 205,
+        y: boxY,
         intent: "crossReceiver",
         bias: 10 + profile.crossing * 5 + input.player.offTheBall * 0.2 +
           (hasPlaystyle(input.player, PlaystyleTag.Poacher) || hasPlaystyle(input.player, PlaystyleTag.AerialThreat) ? 5 : 0) +
-          (primeRunBeyond - 0.5) * 12 + ((prime?.shooting.aerial ?? 0.5) - 0.5) * 8,
+          (primeRunBeyond - 0.5) * 12 + ((prime?.shooting.aerial ?? 0.5) - 0.5) * 8 +
+          (instructions.boxRole && !["edge", "stayBack"].includes(instructions.boxRole) ? 42 : 0) +
+          (instructions.attackRebounds ? 5 : 0),
+      });
+    }
+
+    if (carrierViewedX > 610 && (instructions.boxRole === "edge" || instructions.attackRebounds)) {
+      candidates.push({
+        x: (dir > 0 ? 795 : 205),
+        y: 325 + (input.playerIndex % 2 === 0 ? -52 : 52),
+        intent: "support",
+        bias: 26 + (instructions.attackRebounds ? 8 : 0),
+      });
+    }
+    if (instructions.boxRole === "stayBack" || instructions.restDefense) {
+      candidates.push({
+        x: input.baseTarget.x - dir * (forwardRole ? 55 : 10),
+        y: input.baseTarget.y,
+        intent: "cover",
+        bias: 31,
       });
     }
 

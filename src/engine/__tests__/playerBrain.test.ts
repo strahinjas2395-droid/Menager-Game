@@ -298,4 +298,44 @@ describe("player brain", () => {
     expect(target.x).toBeGreaterThan(650);
     expect(Math.abs(target.y - 325)).toBeGreaterThan(25);
   });
+
+  it("turns explicit support and box jobs into contrasting physical destinations", () => {
+    const striker = player({ id: "instructed-nine", offTheBall: 16, pace: 15, playstyles: [] });
+    const common = {
+      player: striker,
+      playerIndex: 9,
+      role: "ST",
+      current: { x: 675, y: 325 },
+      baseTarget: { x: 700, y: 325 },
+      ball: { x: 520, y: 90 },
+      carrier: { x: 520, y: 90 },
+      teammates: [{ id: striker.id, role: "ST", x: 675, y: 325 }],
+      opponents: [
+        { id: "cb-one", role: "CB", x: 810, y: 270 },
+        { id: "cb-two", role: "CB", x: 815, y: 390 },
+      ],
+      attackingDirection: 1 as const,
+      style: PlayStyle.Balanced,
+      hasPossession: true,
+      transitionAge: 8,
+      runActive: false,
+      stayWide: false,
+      cutInside: false,
+      holdPosition: false,
+      forwardRuns: false,
+    };
+
+    const short = chooseSpatialTarget({ ...common, instructions: { supportRun: "comeShort" } });
+    const beyond = chooseSpatialTarget({ ...common, instructions: { supportRun: "runInBehind" } });
+    const crossingContext = { ...common, ball: { x: 720, y: 90 }, carrier: { x: 720, y: 90 } };
+    const nearPost = chooseSpatialTarget({ ...crossingContext, instructions: { boxRole: "nearPost" } });
+    const farPost = chooseSpatialTarget({ ...crossingContext, instructions: { boxRole: "farPost" } });
+
+    expect(short.intent).toBe("comeShort");
+    expect(beyond.intent).toBe("runBehind");
+    expect(beyond.x).toBeGreaterThan(short.x + 100);
+    expect(nearPost.intent).toBe("crossReceiver");
+    expect(farPost.intent).toBe("crossReceiver");
+    expect(farPost.y).toBeGreaterThan(nearPost.y + 130);
+  });
 });

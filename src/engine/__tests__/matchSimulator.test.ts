@@ -123,6 +123,9 @@ interface SimulatorTestHarness {
     toY: number;
     movementPattern?: string;
     runoffRoute?: { outsideX: number; outsideY: number; reentryX: number; reentryY: number; stage: string };
+    arcH?: number;
+    flavor?: string;
+    targetIdx?: number;
   } | null;
   setPiece: { kind: string; side: "home" | "away"; x: number; y: number; takerIdx: number; timer: number } | null;
   penaltyState: { side: "home" | "away"; takerIdx: number; timer: number } | null;
@@ -132,6 +135,13 @@ interface SimulatorTestHarness {
   startSetPiece: (kind: "corner" | "throw" | "freeKick" | "goalKick", side: "home" | "away", x: number, y: number) => void;
   startPenalty: (side: "home" | "away") => void;
   executeKnockOn: (side: "home" | "away", player: SimulatorTestPlayer, attempted: boolean, defenderId?: string) => void;
+  executeCross: (side: "home" | "away", player: SimulatorTestPlayer, cutback: boolean) => void;
+  choosePass: (side: "home" | "away", player: SimulatorTestPlayer, style: PlayStyle, dir: number) => { idx: number; x: number; y: number } | null;
+  setPiecePosition: (
+    piece: { kind: "corner" | "throw" | "freeKick" | "goalKick"; side: "home" | "away"; x: number; y: number; takerIdx: number; timer: number },
+    playerSide: "home" | "away",
+    index: number,
+  ) => { x: number; y: number; intensity: number };
   resolveShotArrival: (flight: {
     kind: "shot";
     side: "home" | "away";
@@ -1482,6 +1492,81 @@ describe("MatchSimulator", () => {
     for (let i = 0; i < 400 && sim.getStats().shotsHome === 0; i++) sim.tick(0.1);
     expect(sim.getStats().shotsHome).toBe(1);
     expect(sim.getEvents().some((e) => e.type === "PenaltyGoal" || e.type === "PenaltyMissed")).toBe(true);
+  });
+
+  it("executes low near-post and floated far-post crossing instructions as different ball flights", () => {
+    const lowGame = setup(975);
+    lowGame.home.teamDirectives = { crossType: "low", crossAim: "nearPost", crossFrequency: "often" };
+    const low = simulatorHarness(lowGame.sim);
+    const lowCrosser = low.homePlayers.find((player) => ["RW", "RM", "RB", "RWB"].includes(player.role))!;
+    lowCrosser.x = 760;
+    lowCrosser.y = 72;
+    low.ball = { x: lowCrosser.x, y: lowCrosser.y };
+    low.executeCross("home", lowCrosser, false);
+
+    const highGame = setup(975);
+    highGame.home.teamDirectives = { crossType: "floated", crossAim: "farPost", crossFrequency: "often" };
+    const high = simulatorHarness(highGame.sim);
+    const highCrosser = high.homePlayers.find((player) => ["RW", "RM", "RB", "RWB"].includes(player.role))!;
+    highCrosser.x = 760;
+    highCrosser.y = 72;
+    high.ball = { x: highCrosser.x, y: highCrosser.y };
+    high.executeCross("home", highCrosser, false);
+
+    expect(low.flight).toMatchObject({ kind: "pass", flavor: "driven", arcH: 3 });
+    expect(high.flight?.kind).toBe("cross");
+    expect(high.flight?.flavor).toBe("lofted");
+    expect(high.flight!.arcH!).toBeGreaterThan(50);
+    expect(high.flight!.toY).toBeGreaterThan(low.flight!.toY + 45);
+  });
+
+  it("makes progression, goalkeeper depth and corner jobs alter physical choices and positions", () => {
+    const passMean = (instruction: "recycle" | "vertical") => {
+      const game = setup(976);
+      const internal = simulatorHarness(game.sim);
+      const passerIndex = game.home.roles.findIndex((role) => role === "CM" || role === "CDM");
+      const passer = internal.homePlayers[passerIndex];
+      game.home.directives = { [passer.p.id]: { progression: instruction } };
+      const gains: number[] = [];
+      for (let i = 0; i < 120; i++) {
+        const target = internal.choosePass("home", passer, PlayStyle.Balanced, 1);
+        if (target) gains.push(target.x - passer.x);
+      }
+      return gains.reduce((sum, value) => sum + value, 0) / gains.length;
+    };
+    expect(passMean("vertical")).toBeGreaterThan(passMean("recycle") + 80);
+
+    const deepGame = setup(977);
+    deepGame.home.teamDirectives = { goalkeeperPosition: "deep" };
+    const deep = simulatorHarness(deepGame.sim);
+    deep.tickMovement(0.1, false);
+    const deepKeeper = deep.homePlayers.find((player) => player.role === "GK")!;
+
+    const sweepGame = setup(977);
+    sweepGame.home.teamDirectives = { goalkeeperPosition: "sweeper" };
+    const sweep = simulatorHarness(sweepGame.sim);
+    sweep.tickMovement(0.1, false);
+    const sweepKeeper = sweep.homePlayers.find((player) => player.role === "GK")!;
+    expect(sweepKeeper.tx).toBeGreaterThan(deepKeeper.tx + 70);
+
+    const cornerGame = setup(978);
+    const corner = simulatorHarness(cornerGame.sim);
+    const outfield = corner.homePlayers
+      .map((player, index) => ({ player, index }))
+      .filter(({ player }) => player.role !== "GK");
+    const taker = outfield[0];
+    const guard = outfield[1];
+    const runner = outfield[2];
+    cornerGame.home.directives = {
+      [guard.player.p.id]: { cornerRole: "stayBack" },
+      [runner.player.p.id]: { cornerRole: "farPost" },
+    };
+    const piece = { kind: "corner" as const, side: "home" as const, x: 995, y: 5, takerIdx: taker.index, timer: 0 };
+    const guardTarget = corner.setPiecePosition(piece, "home", guard.index);
+    const runnerTarget = corner.setPiecePosition(piece, "home", runner.index);
+    expect(guardTarget.x).toBeLessThan(450);
+    expect(runnerTarget.x).toBeGreaterThan(900);
+    expect(runnerTarget.y).toBeGreaterThan(360);
   });
 
   it("leaves the scored ball behind the line and animates the scoring team before kickoff", () => {

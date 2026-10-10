@@ -473,6 +473,42 @@ export interface PlayerRoleAssignment {
   duty: PlayerDuty;
 }
 
+export type SupportRunInstruction = "balanced" | "comeShort" | "runInBehind" | "moveIntoChannels";
+export type FlankRunInstruction = "balanced" | "overlap" | "underlap";
+export type CarryPathInstruction = "balanced" | "inside" | "outside" | "downLine";
+export type ReceiveInstruction = "secure" | "turn" | "oneTouch";
+export type PassingRiskInstruction = "safe" | "balanced" | "creative";
+export type PassTargetInstruction = "feet" | "mixed" | "space";
+export type ProgressionInstruction = "recycle" | "balanced" | "vertical";
+export type BuildUpInstruction = "playOut" | "mixed" | "bypassPress";
+export type AttackingFocusInstruction = "left" | "centre" | "right" | "bothFlanks" | "balanced";
+export type CrossFrequencyInstruction = "never" | "balanced" | "often";
+export type CrossTypeInstruction = "low" | "whipped" | "floated";
+export type CrossAimInstruction = "nearPost" | "centre" | "farPost" | "target";
+export type CrossPositionInstruction = "early" | "mixed" | "byline";
+export type ShotSelectionInstruction = "workIntoBox" | "balanced" | "shootOnSight";
+export type ShotTechniqueInstruction = "mixed" | "placed" | "power" | "chip" | "firstTime";
+export type BoxRoleInstruction = "stayBack" | "edge" | "nearPost" | "centre" | "farPost";
+export type DefensiveTaskInstruction = "holdZone" | "stepOut" | "cover" | "trackRunner";
+export type PressTriggerInstruction = "never" | "badTouch" | "onReceive" | "always";
+export type PressDirectionInstruction = "normal" | "inside" | "outside" | "weakFoot";
+export type TackleStyleInstruction = "stayOnFeet" | "normal" | "hard";
+export type InterceptionInstruction = "holdShape" | "normal" | "stepIn";
+export type AerialApproachInstruction = "avoid" | "normal" | "dominate";
+export type TransitionAttackInstruction = "secure" | "holdShape" | "counter";
+export type TransitionDefenseInstruction = "regroup" | "delay" | "counterPress";
+export type RecoveryInstruction = "normal" | "urgent";
+export type GoalkeeperPositionInstruction = "deep" | "normal" | "sweeper";
+export type GoalkeeperCrossInstruction = "holdLine" | "claim" | "punch";
+export type GoalkeeperDistributionInstruction = "short" | "mixed" | "long";
+export type GoalkeeperTargetInstruction = "centreBacks" | "fullBacks" | "playmaker" | "flanks" | "striker";
+export type GoalkeeperReleaseInstruction = "slow" | "normal" | "quick";
+export type GoalkeeperOneOnOneInstruction = "hold" | "balanced" | "rush";
+export type CornerDeliveryInstruction = "short" | "nearPost" | "centre" | "farPost";
+export type CornerRoleInstruction = "stayBack" | "edge" | "nearPost" | "centre" | "farPost" | "markKeeper";
+export type ThrowInInstruction = "short" | "line" | "long";
+export type FreeKickRoleInstruction = "stayBack" | "edge" | "attack" | "disruptWall";
+
 export interface TacticalDirectives {
   // Shape and movement
   holdPosition?: boolean;
@@ -502,6 +538,60 @@ export interface TacticalDirectives {
   pressHard?: boolean;
   pressLess?: boolean;
   conserveEnergy?: boolean;
+
+  // Combinable player behaviours. Choice fields are deliberately finite: they
+  // cover executable football actions without pretending free text is infinite.
+  playOneTwos?: boolean;
+  thirdManRuns?: boolean;
+  makeDecoyRuns?: boolean;
+  shieldBall?: boolean;
+  knockBallPastOpponent?: boolean;
+  attackRebounds?: boolean;
+  cutbacks?: boolean;
+  restDefense?: boolean;
+  counterOutlet?: boolean;
+  screenPassingLanes?: boolean;
+  blockCrosses?: boolean;
+  blockShots?: boolean;
+  preventShortGKDistribution?: boolean;
+  dropBetweenDefenders?: boolean;
+  swapPositions?: boolean;
+
+  supportRun?: SupportRunInstruction;
+  flankRun?: FlankRunInstruction;
+  carryPath?: CarryPathInstruction;
+  receiveMode?: ReceiveInstruction;
+  passingRisk?: PassingRiskInstruction;
+  passTarget?: PassTargetInstruction;
+  progression?: ProgressionInstruction;
+  buildUpStyle?: BuildUpInstruction;
+  attackingFocus?: AttackingFocusInstruction;
+  crossFrequency?: CrossFrequencyInstruction;
+  crossType?: CrossTypeInstruction;
+  crossAim?: CrossAimInstruction;
+  crossPosition?: CrossPositionInstruction;
+  shotSelection?: ShotSelectionInstruction;
+  shotTechnique?: ShotTechniqueInstruction;
+  boxRole?: BoxRoleInstruction;
+  defensiveTask?: DefensiveTaskInstruction;
+  pressTrigger?: PressTriggerInstruction;
+  pressDirection?: PressDirectionInstruction;
+  tackleStyle?: TackleStyleInstruction;
+  interceptionStyle?: InterceptionInstruction;
+  aerialApproach?: AerialApproachInstruction;
+  transitionAttack?: TransitionAttackInstruction;
+  transitionDefense?: TransitionDefenseInstruction;
+  recoveryIntensity?: RecoveryInstruction;
+  goalkeeperPosition?: GoalkeeperPositionInstruction;
+  goalkeeperCrosses?: GoalkeeperCrossInstruction;
+  goalkeeperDistribution?: GoalkeeperDistributionInstruction;
+  goalkeeperTarget?: GoalkeeperTargetInstruction;
+  goalkeeperRelease?: GoalkeeperReleaseInstruction;
+  goalkeeperOneOnOne?: GoalkeeperOneOnOneInstruction;
+  cornerDelivery?: CornerDeliveryInstruction;
+  cornerRole?: CornerRoleInstruction;
+  throwInStyle?: ThrowInInstruction;
+  freeKickRole?: FreeKickRoleInstruction;
 
   // Deliberate service to a teammate. The id is validated against the current squad.
   preferredTargetId?: string;
@@ -589,6 +679,10 @@ export interface TacticalSetup {
   teamInstructions?: string;
   /** Validated semantic plans. Text remains the source of truth; stale entries are ignored. */
   instructionCache?: TacticalInstructionCache;
+  /** Catalogue choices override interpreted team text. */
+  teamDirectiveOverrides?: TacticalDirectives;
+  /** Player catalogue choices have final authority over role and team plans. */
+  playerDirectiveOverrides?: Record<string, TacticalDirectives>;
   /** Explicit role/duty overrides by player id; omitted entries use a position/style-aware default. */
   playerRoles?: Record<string, PlayerRoleAssignment>;
   /** playerId -> pitch position override (x,y in 0-1000 / 0-650) */

@@ -18,6 +18,7 @@ import {
   type TacticalPlayerRole,
 } from "@/types";
 import { resolvePlayerRoleAssignment } from "@/engine/playerRoles";
+import { BOOLEAN_INSTRUCTIONS, CHOICE_INSTRUCTIONS } from "@/engine/instructionCatalog";
 
 export type PlayerDirectives = TacticalDirectives;
 
@@ -34,29 +35,9 @@ export interface InstructionRosterPlayer {
   duty?: PlayerDuty;
 }
 
-const BOOL_KEYS = [
-  "holdPosition",
-  "forwardRuns",
-  "roam",
-  "stayWide",
-  "cutInside",
-  "defensiveDuty",
-  "shootFromDistance",
-  "avoidShooting",
-  "dribbleMore",
-  "dribbleLess",
-  "riskyPasses",
-  "shortPassing",
-  "directPassing",
-  "targetMan",
-  "earlyCross",
-  "switchPlay",
-  "clearImmediately",
-  "tightMarking",
-  "pressHard",
-  "pressLess",
-  "conserveEnergy",
-] as const satisfies readonly (keyof TacticalDirectives)[];
+const BOOL_KEYS = BOOLEAN_INSTRUCTIONS.map((entry) => entry.key);
+
+type BooleanDirectiveKey = (typeof BOOLEAN_INSTRUCTIONS)[number]["key"];
 
 /** Build the exact roster context shown to the language model. */
 export function buildInstructionRoster(
@@ -123,7 +104,15 @@ export function sanitizeDirectives(
   const out: TacticalDirectives = {};
 
   for (const key of BOOL_KEYS) {
-    if (typeof input[key] === "boolean") out[key] = input[key];
+    if (typeof input[key] === "boolean") {
+      (out as Record<string, unknown>)[key] = input[key];
+    }
+  }
+  for (const definition of CHOICE_INSTRUCTIONS) {
+    const candidate = input[definition.key];
+    if (typeof candidate === "string" && definition.options.some((entry) => entry.value === candidate)) {
+      (out as Record<string, unknown>)[definition.key] = candidate;
+    }
   }
 
   if (typeof input.preferredTargetId === "string" && validPlayerIds.has(input.preferredTargetId)) {
@@ -169,10 +158,31 @@ export function mergeDirectives(
   team: TacticalDirectives | undefined,
   individual: TacticalDirectives | undefined,
 ): TacticalDirectives {
-  return { ...(team ?? {}), ...(individual ?? {}) };
-}
+  const merged: TacticalDirectives = { ...(team ?? {}), ...(individual ?? {}) };
+  if (!individual) return merged;
 
-type BooleanDirectiveKey = (typeof BOOL_KEYS)[number];
+  // Choice fields are newer, mutually-exclusive expressions of several legacy
+  // switches. When a higher-precedence layer chooses one, it must also silence
+  // a contradictory inherited boolean from a role or team instruction.
+  if (individual.supportRun) {
+    if (individual.supportRun === "runInBehind") merged.forwardRuns = true;
+    else if (individual.supportRun !== "balanced") merged.forwardRuns = false;
+    if (individual.supportRun !== "balanced") merged.holdPosition = false;
+  }
+  if (individual.flankRun === "overlap" || individual.flankRun === "underlap") merged.holdPosition = false;
+  if (individual.passingRisk) merged.riskyPasses = individual.passingRisk === "creative";
+  if (individual.crossFrequency === "never") merged.earlyCross = false;
+  if (individual.crossPosition === "early") merged.earlyCross = true;
+  if (individual.crossPosition === "byline") merged.earlyCross = false;
+  if (individual.shotSelection) {
+    merged.shootFromDistance = individual.shotSelection === "shootOnSight";
+    merged.avoidShooting = false;
+  }
+  if (individual.pressTrigger === "never") merged.pressHard = false;
+  if (individual.pressTrigger === "always") merged.pressLess = false;
+  if (individual.boxRole === "stayBack") merged.forwardRuns = false;
+  return merged;
+}
 
 interface LexEntry {
   re: RegExp;
@@ -285,14 +295,18 @@ export function compileInstructionPlans(
   teamText: string,
   cache: TacticalInstructionCache | undefined,
   roster: InstructionRosterPlayer[],
+  teamOverrides?: TacticalDirectives,
+  playerOverrides?: Record<string, TacticalDirectives>,
 ): CompiledInstructionPlans {
   const fingerprint = instructionContextFingerprint(roster);
   const validIds = new Set(roster.map((player) => player.id));
   const teamPlan = cache?.team;
   const currentTeam = isInterpretationCurrent(teamPlan, teamText, fingerprint, "team");
-  const team = currentTeam
+  const interpretedTeam = currentTeam
     ? sanitizeDirectives(teamPlan.directives, validIds)
     : parseInstructions(teamText);
+  // Structured catalogue selections are deliberate and therefore beat prose.
+  const team = mergeDirectives(interpretedTeam, sanitizeDirectives(teamOverrides, validIds));
   const playerDirectives = parseSquadInstructions(squad, cache, fingerprint);
 
   if (currentTeam) {
@@ -306,6 +320,15 @@ export function compileInstructionPlans(
     }
   }
 
+  // Individual catalogue values are the final authority, including explicit
+  // false values that switch off a team or role behaviour.
+  for (const [playerId, raw] of Object.entries(playerOverrides ?? {})) {
+    if (!validIds.has(playerId)) continue;
+    const explicit = sanitizeDirectives(raw, validIds);
+    if (!Object.keys(explicit).length) continue;
+    playerDirectives[playerId] = mergeDirectives(playerDirectives[playerId], explicit);
+  }
+
   return {
     teamDirectives: Object.keys(team).length ? team : undefined,
     playerDirectives,
@@ -313,53 +336,57 @@ export function compileInstructionPlans(
   };
 }
 
-const LABELS: Partial<Record<keyof TacticalDirectives, string>> = {
-  holdPosition: "Hold position",
-  forwardRuns: "Attack space",
-  roam: "Roam freely",
-  stayWide: "Hold width",
-  cutInside: "Move inside",
-  defensiveDuty: "Defend from a deeper position",
-  shootFromDistance: "Look for sensible long shots",
-  avoidShooting: "Shoot less",
-  dribbleMore: "Take players on",
-  dribbleLess: "Release the ball early",
-  riskyPasses: "Attempt incisive passes",
-  shortPassing: "Prefer short passes",
-  directPassing: "Prefer direct passes",
-  targetMan: "Hold up play",
-  earlyCross: "Deliver early",
-  switchPlay: "Switch play",
-  clearImmediately: "Clear danger immediately",
-  tightMarking: "Mark tightly",
-  pressHard: "Press aggressively",
-  pressLess: "Do not press",
-  conserveEnergy: "Conserve energy",
-};
+const LABELS: Partial<Record<keyof TacticalDirectives, string>> = Object.assign(
+  Object.fromEntries(BOOLEAN_INSTRUCTIONS.map((entry) => [entry.key, entry.label])),
+  {
+    forwardRuns: "Attack space",
+    roam: "Roam freely",
+    stayWide: "Hold width",
+    cutInside: "Move inside",
+    defensiveDuty: "Defend from a deeper position",
+    shootFromDistance: "Look for sensible long shots",
+    avoidShooting: "Shoot less",
+    dribbleMore: "Take players on",
+    dribbleLess: "Release the ball early",
+    riskyPasses: "Attempt incisive passes",
+    shortPassing: "Prefer short passes",
+    directPassing: "Prefer direct passes",
+    targetMan: "Hold up play",
+    earlyCross: "Deliver early",
+    clearImmediately: "Clear danger immediately",
+    tightMarking: "Mark tightly",
+    pressHard: "Press aggressively",
+    pressLess: "Do not press",
+    conserveEnergy: "Conserve energy",
+  },
+);
 
-const FALSE_LABELS: Partial<Record<keyof TacticalDirectives, string>> = {
-  holdPosition: "Do not remain fixed in position",
-  forwardRuns: "Do not make attacking runs",
-  roam: "Keep positional discipline",
-  stayWide: "Do not stay on the touchline",
-  cutInside: "Do not move inside",
-  defensiveDuty: "Do not adopt a deep defensive duty",
-  shootFromDistance: "Do not shoot from distance",
-  avoidShooting: "Take suitable shooting chances",
-  dribbleMore: "Do not increase take-ons",
-  dribbleLess: "Do not restrict dribbling",
-  riskyPasses: "Avoid risky passes",
-  shortPassing: "Do not restrict passing to short options",
-  directPassing: "Do not force direct passes",
-  targetMan: "Do not play as a holding target",
-  earlyCross: "Do not cross early",
-  switchPlay: "Do not force switches",
-  clearImmediately: "Do not clear automatically",
-  tightMarking: "Do not mark tightly",
-  pressHard: "Do not join the aggressive press",
-  pressLess: "Do not stand off",
-  conserveEnergy: "Use normal intensity",
-};
+const FALSE_LABELS: Partial<Record<keyof TacticalDirectives, string>> = Object.assign(
+  Object.fromEntries(BOOLEAN_INSTRUCTIONS.map((entry) => [entry.key, `Do not: ${entry.label}`])),
+  {
+    holdPosition: "Do not remain fixed in position",
+    forwardRuns: "Do not make attacking runs",
+    roam: "Keep positional discipline",
+    stayWide: "Do not stay on the touchline",
+    cutInside: "Do not move inside",
+    defensiveDuty: "Do not adopt a deep defensive duty",
+    shootFromDistance: "Do not shoot from distance",
+    avoidShooting: "Take suitable shooting chances",
+    dribbleMore: "Do not increase take-ons",
+    dribbleLess: "Do not restrict dribbling",
+    riskyPasses: "Avoid risky passes",
+    shortPassing: "Do not restrict passing to short options",
+    directPassing: "Do not force direct passes",
+    targetMan: "Do not play as a holding target",
+    earlyCross: "Do not cross early",
+    switchPlay: "Do not force switches",
+    clearImmediately: "Do not clear automatically",
+    tightMarking: "Do not mark tightly",
+    pressHard: "Do not join the aggressive press",
+    pressLess: "Do not stand off",
+    conserveEnergy: "Use normal intensity",
+  },
+);
 
 /** Friendly chips for either AI results or the basic fallback. */
 export function summarizeDirectives(directives: TacticalDirectives): string[] {
@@ -371,6 +398,12 @@ export function summarizeDirectives(directives: TacticalDirectives): string[] {
     .filter((key) => directives[key] === false)
     .map((key) => FALSE_LABELS[key])
     .filter((label): label is string => Boolean(label)));
+  for (const definition of CHOICE_INSTRUCTIONS) {
+    const value = directives[definition.key];
+    if (typeof value !== "string") continue;
+    const selected = definition.options.find((entry) => entry.value === value);
+    if (selected) labels.push(`${definition.label}: ${selected.label}`);
+  }
   if (directives.preferredTargetId) {
     const delivery = directives.targetDelivery === "aerial"
       ? "with aerial service"

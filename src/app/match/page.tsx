@@ -8,6 +8,7 @@ import StepDots from "@/components/StepDots";
 import InstructionInterpretationView from "@/components/InstructionInterpretationView";
 import OpponentPlanEditor, { type PlanEditorPlayer } from "@/components/OpponentPlanEditor";
 import PlayerRoleEditor from "@/components/PlayerRoleEditor";
+import StructuredInstructionEditor from "@/components/StructuredInstructionEditor";
 import { formatMatchClock } from "@/engine/matchClock";
 import {
   playerRoleDefinition,
@@ -179,6 +180,11 @@ function MatchScreen() {
         team: source.instructionCache?.team,
         players: { ...(source.instructionCache?.players ?? {}) },
       },
+      teamDirectiveOverrides: { ...(source.teamDirectiveOverrides ?? {}) },
+      playerDirectiveOverrides: Object.fromEntries(
+        Object.entries(source.playerDirectiveOverrides ?? {})
+          .map(([playerId, directives]) => [playerId, { ...directives }]),
+      ),
       playerRoles: { ...(source.playerRoles ?? {}) },
       positionOverrides: { ...source.positionOverrides },
       setPieces: { ...source.setPieces },
@@ -401,6 +407,8 @@ function MatchScreen() {
       updatedTactics.teamInstructions ?? "",
       updatedTactics.instructionCache,
       liveInstructionRoster,
+      updatedTactics.teamDirectiveOverrides,
+      updatedTactics.playerDirectiveOverrides,
     );
     post({ type: "tactics", side: userSide, tactics: updatedTactics });
     post({
@@ -1062,6 +1070,15 @@ function LiveTacticsPanel({
             <p className="mt-1.5 text-[9px] text-white/35">Changes take effect when you apply and resume.</p>
           </div>
 
+          <div className="mt-4">
+            <StructuredInstructionEditor
+              scope="team"
+              compact
+              value={tactics.teamDirectiveOverrides}
+              onChange={(value) => set("teamDirectiveOverrides", value)}
+            />
+          </div>
+
           <div className="mt-4 rounded-xl border border-gold/20 bg-card p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="stat-label">Live Team Instruction</span>
@@ -1131,6 +1148,21 @@ function LiveTacticsPanel({
                 Role and duty can be changed once this player is in the active XI.
               </p>
             )}
+            <div className="mt-2">
+              <StructuredInstructionEditor
+                scope="player"
+                compact
+                position={selectedDraftPosition ?? instructionPlayers.find((player) => player.id === instructionPlayerId)?.primaryPosition}
+                value={tactics.playerDirectiveOverrides?.[instructionPlayerId]}
+                onChange={(value) => onChange({
+                  ...tactics,
+                  playerDirectiveOverrides: {
+                    ...(tactics.playerDirectiveOverrides ?? {}),
+                    [instructionPlayerId]: value,
+                  },
+                })}
+              />
+            </div>
             <textarea value={selectedInstructionText}
               onChange={(e) => onInstructionText((v) => ({ ...v, [instructionPlayerId]: e.target.value }))}
               placeholder="Tell this player what you mean in any wording…" rows={2} maxLength={600}

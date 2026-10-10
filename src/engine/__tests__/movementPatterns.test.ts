@@ -261,4 +261,21 @@ describe("contextual dribble movement", () => {
     expect(away.waypoints.at(-1)!.x).toBeCloseTo(1000 - home.waypoints.at(-1)!.x, 5);
     expect(away.waypoints.at(-1)!.y).toBeCloseTo(650 - home.waypoints.at(-1)!.y, 5);
   });
+
+  it("makes explicit inside and down-line carries choose different real routes", () => {
+    const common = input({
+      player: player({ preferredFoot: "Right", playstyles: [] }),
+      current: { x: 655, y: 92 },
+      velocity: { x: 42, y: 0 },
+      opponents: [opponent("full-back", 735, 122), opponent("cover", 800, 285)],
+      phase: "finish",
+      style: PlayStyle.Balanced,
+    });
+    const inside = chooseDribbleRoute({ ...common, instructions: { carryPath: "inside" } });
+    const line = chooseDribbleRoute({ ...common, instructions: { carryPath: "downLine" } });
+
+    expect(["insideCut", "halfSpaceDrive"]).toContain(inside.pattern);
+    expect(["outsideDrive", "bylineDrive"]).toContain(line.pattern);
+    expect(inside.waypoints.at(-1)!.y).toBeGreaterThan(line.waypoints.at(-1)!.y + 55);
+  });
 });

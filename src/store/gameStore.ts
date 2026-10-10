@@ -777,6 +777,8 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
         tactics.teamInstructions ?? "",
         tactics.instructionCache,
         roster,
+        tactics.teamDirectiveOverrides,
+        tactics.playerDirectiveOverrides,
       );
       side.teamDirectives = plans.teamDirectives;
       side.directives = plans.playerDirectives;

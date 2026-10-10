@@ -184,6 +184,42 @@ describe("core game loop (integration)", () => {
       duty: "Support",
     });
 
+    // The exhaustive structured catalogue persists in the save and compiles
+    // with player values retaining final authority over the team plan.
+    await store().updateTactics({
+      ...store().save!.tacticalSetup,
+      teamDirectiveOverrides: {
+        transitionDefense: "regroup",
+        passingRisk: "safe",
+        pressHard: false,
+      },
+      playerDirectiveOverrides: {
+        [starterId]: {
+          transitionDefense: "counterPress",
+          pressHard: true,
+          goalkeeperPosition: "sweeper",
+        },
+      },
+    });
+    ctx = getMatchContext(store().save!, week1UserFixture.id)!;
+    const catalogueSide = week1UserFixture.homeClubId === clubId ? ctx.home : ctx.away;
+    expect(catalogueSide.tactics.teamDirectiveOverrides).toMatchObject({
+      transitionDefense: "regroup",
+      passingRisk: "safe",
+      pressHard: false,
+    });
+    expect(catalogueSide.teamDirectives).toMatchObject({
+      clearImmediately: true,
+      transitionDefense: "regroup",
+      passingRisk: "safe",
+      pressHard: false,
+    });
+    expect(catalogueSide.directives?.[starterId]).toMatchObject({
+      transitionDefense: "counterPress",
+      pressHard: true,
+      goalkeeperPosition: "sweeper",
+    });
+
     // Exact opponent plans are validated, keyed by fixture and compiled into
     // the user side without making the field mandatory for older saves.
     const oppositionSide = week1UserFixture.homeClubId === clubId ? ctx.away : ctx.home;

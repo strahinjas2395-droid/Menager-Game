@@ -20,6 +20,12 @@ import {
   summarizeDirectives,
   type InstructionRosterPlayer,
 } from "@/engine/directives";
+import {
+  BOOLEAN_INSTRUCTIONS,
+  CHOICE_INSTRUCTIONS,
+  type BooleanDirectiveKey,
+  type ChoiceDirectiveKey,
+} from "@/engine/instructionCatalog";
 
 export const LOCAL_TACTICAL_MODEL = "Xenova/all-MiniLM-L6-v2";
 export const LOCAL_TACTICAL_MODEL_REVISION = "5f8986ea538762fd82a43a768d583a5a9d71d1ec";
@@ -42,33 +48,19 @@ export interface SentenceEmbedder {
   embed(texts: string[]): Promise<number[][]>;
 }
 
-export type BooleanDirectiveKey =
-  | "holdPosition"
-  | "forwardRuns"
-  | "roam"
-  | "stayWide"
-  | "cutInside"
-  | "defensiveDuty"
-  | "shootFromDistance"
-  | "avoidShooting"
-  | "dribbleMore"
-  | "dribbleLess"
-  | "riskyPasses"
-  | "shortPassing"
-  | "directPassing"
-  | "targetMan"
-  | "earlyCross"
-  | "switchPlay"
-  | "clearImmediately"
-  | "tightMarking"
-  | "pressHard"
-  | "pressLess"
-  | "conserveEnergy";
+export type { BooleanDirectiveKey } from "@/engine/instructionCatalog";
 
-export type SemanticIntent = BooleanDirectiveKey | "targetGround" | "targetAerial" | "targetMixed";
+export type SemanticIntent =
+  | BooleanDirectiveKey
+  | `choice:${ChoiceDirectiveKey}:${string}`
+  | "targetGround"
+  | "targetAerial"
+  | "targetMixed";
 
 export interface SemanticLabel {
   intent: SemanticIntent;
+  /** Mutually exclusive labels share a group, so only the strongest survives. */
+  group: string;
   value: boolean;
   description: string;
 }
@@ -76,58 +68,27 @@ export interface SemanticLabel {
 export interface SemanticDecision {
   clauseIndex: number;
   intent: SemanticIntent;
+  group: string;
   value: boolean;
   confidence: number;
 }
 
-/** Descriptions define engine capabilities; they are not examples of phrases a
- * manager must type. Sentence embeddings map novel wording to these meanings. */
+/** Descriptions define executable capabilities, not phrases a manager must
+ * memorise. Sentence embeddings map novel language to this finite contract. */
 export const LOCAL_SEMANTIC_LABELS: readonly SemanticLabel[] = [
-  { intent: "holdPosition", value: true, description: "The footballer must hold the assigned position and preserve the team's structure." },
-  { intent: "holdPosition", value: false, description: "The footballer is allowed to leave the assigned position and move freely." },
-  { intent: "forwardRuns", value: true, description: "The footballer should make proactive attacking runs beyond the ball." },
-  { intent: "forwardRuns", value: false, description: "The footballer must stop making forward runs beyond the ball." },
-  { intent: "roam", value: true, description: "The footballer may roam away from the normal positional lane to find space." },
-  { intent: "roam", value: false, description: "The footballer must not roam away from the normal positional lane." },
-  { intent: "stayWide", value: true, description: "The footballer should maintain width close to the touchline." },
-  { intent: "stayWide", value: false, description: "The footballer should leave the touchline rather than staying wide." },
-  { intent: "cutInside", value: true, description: "The wide footballer should cut inward into central and half-space areas." },
-  { intent: "cutInside", value: false, description: "The wide footballer should avoid cutting inside and remain outside." },
-  { intent: "defensiveDuty", value: true, description: "The footballer must defend deeply, track back, and join the defensive shape." },
-  { intent: "defensiveDuty", value: false, description: "The footballer is released from a deep defensive assignment." },
-  { intent: "shootFromDistance", value: true, description: "The footballer should attempt sensible long-range shots from outside the penalty area." },
-  { intent: "shootFromDistance", value: false, description: "The footballer should not attempt long-range shots." },
-  { intent: "avoidShooting", value: true, description: "The footballer should avoid shooting and look for a pass instead." },
-  { intent: "avoidShooting", value: false, description: "The footballer is encouraged to shoot when a chance appears." },
-  { intent: "dribbleMore", value: true, description: "The footballer should dribble and try to beat defenders more often." },
-  { intent: "dribbleMore", value: false, description: "The footballer should not increase dribbling attempts." },
-  { intent: "dribbleLess", value: true, description: "The footballer should release the ball early and dribble less often." },
-  { intent: "dribbleLess", value: false, description: "The footballer is not required to reduce dribbling." },
-  { intent: "riskyPasses", value: true, description: "The footballer should attempt incisive risky passes and through balls." },
-  { intent: "riskyPasses", value: false, description: "The footballer should avoid risky passes and protect possession." },
-  { intent: "shortPassing", value: true, description: "The footballer should prefer short combinations and passes to feet." },
-  { intent: "shortPassing", value: false, description: "The footballer should stop restricting passing to short combinations." },
-  { intent: "directPassing", value: true, description: "The footballer should play longer vertical passes that bypass lines." },
-  { intent: "directPassing", value: false, description: "The footballer should avoid direct long vertical passing." },
-  { intent: "targetMan", value: true, description: "The forward should receive with back to goal, shield the ball, and act as a target." },
-  { intent: "targetMan", value: false, description: "The forward should stop acting as a back-to-goal target player." },
-  { intent: "earlyCross", value: true, description: "The footballer should deliver crosses early from wide positions." },
-  { intent: "earlyCross", value: false, description: "The footballer should avoid crossing early." },
-  { intent: "switchPlay", value: true, description: "The footballer should switch play with diagonal passes to the opposite flank." },
-  { intent: "switchPlay", value: false, description: "The footballer should avoid large switches to the opposite flank." },
-  { intent: "clearImmediately", value: true, description: "In defensive danger the footballer should clear the ball immediately." },
-  { intent: "clearImmediately", value: false, description: "The footballer should try to retain possession instead of clearing immediately." },
-  { intent: "tightMarking", value: true, description: "The footballer should mark an opponent tightly while staying goal-side." },
-  { intent: "tightMarking", value: false, description: "The footballer should stop tight man marking and defend space." },
-  { intent: "pressHard", value: true, description: "The footballer should press the ball aggressively with high effort." },
-  { intent: "pressHard", value: false, description: "The footballer should not press aggressively." },
-  { intent: "pressLess", value: true, description: "The footballer should stand off, press less, and protect the team shape." },
-  { intent: "pressLess", value: false, description: "The footballer is released from the instruction to stand off and press less." },
-  { intent: "conserveEnergy", value: true, description: "The footballer should conserve energy and reduce unnecessary sprinting." },
-  { intent: "conserveEnergy", value: false, description: "The footballer should stop conserving energy and work at normal intensity." },
-  { intent: "targetGround", value: true, description: "Deliberately pass to the named teammate with the ball played along the ground to feet." },
-  { intent: "targetAerial", value: true, description: "Deliberately seek the named teammate with long high aerial service." },
-  { intent: "targetMixed", value: true, description: "Make the named teammate a preferred passing target using any suitable delivery." },
+  ...BOOLEAN_INSTRUCTIONS.flatMap((entry) => [
+    { intent: entry.key, group: entry.key, value: true, description: entry.onDescription },
+    { intent: entry.key, group: entry.key, value: false, description: entry.offDescription },
+  ] satisfies SemanticLabel[]),
+  ...CHOICE_INSTRUCTIONS.flatMap((entry) => entry.options.map((entryOption) => ({
+    intent: `choice:${entry.key}:${entryOption.value}` as SemanticIntent,
+    group: entry.key,
+    value: true,
+    description: `${entry.label}. ${entryOption.description}`,
+  }))),
+  { intent: "targetGround", group: "preferredTarget", value: true, description: "Deliberately pass to the named teammate with the ball played along the ground to feet." },
+  { intent: "targetAerial", group: "preferredTarget", value: true, description: "Deliberately seek the named teammate with long high aerial service." },
+  { intent: "targetMixed", group: "preferredTarget", value: true, description: "Make the named teammate a preferred passing target using any suitable delivery." },
 ];
 
 export const LOCAL_ENTITY_REFERENCE_LABELS = {
@@ -250,7 +211,7 @@ export function decodeSemanticDecisions(
   labelVectors: number[][],
   minimumConfidence = 0.32,
 ): SemanticDecision[] {
-  const bestByIntent = new Map<SemanticIntent, SemanticDecision>();
+  const bestByGroup = new Map<string, SemanticDecision>();
   clauseVectors.forEach((clause, clauseIndex) => {
     const ranked = labelVectors
       .map((label, labelIndex) => ({ labelIndex, confidence: dot(clause, label) }))
@@ -266,13 +227,14 @@ export function decodeSemanticDecisions(
     const decision: SemanticDecision = {
       clauseIndex,
       intent: semantic.intent,
+      group: semantic.group,
       value: semantic.value,
       confidence: best.confidence,
     };
-    const previous = bestByIntent.get(semantic.intent);
-    if (!previous || decision.confidence > previous.confidence) bestByIntent.set(semantic.intent, decision);
+    const previous = bestByGroup.get(semantic.group);
+    if (!previous || decision.confidence > previous.confidence) bestByGroup.set(semantic.group, decision);
   });
-  return [...bestByIntent.values()].sort((a, b) => a.clauseIndex - b.clauseIndex || b.confidence - a.confidence);
+  return [...bestByGroup.values()].sort((a, b) => a.clauseIndex - b.clauseIndex || b.confidence - a.confidence);
 }
 
 function clauses(text: string): string[] {
@@ -415,6 +377,20 @@ function targetDirective(
   };
 }
 
+function semanticDirective(intent: SemanticIntent, value: boolean): TacticalDirectives {
+  if (intent.startsWith("choice:")) {
+    const [, rawKey, ...rawValue] = intent.split(":");
+    const definition = CHOICE_INSTRUCTIONS.find((entry) => entry.key === rawKey);
+    const choice = rawValue.join(":");
+    if (definition?.options.some((entry) => entry.value === choice)) {
+      return { [rawKey]: choice } as TacticalDirectives;
+    }
+    return {};
+  }
+  if (intent === "targetGround" || intent === "targetAerial" || intent === "targetMixed") return {};
+  return { [intent]: value } as TacticalDirectives;
+}
+
 function mergeInto(target: TacticalDirectives, patch: TacticalDirectives): void {
   for (const [key, value] of Object.entries(patch)) {
     if (value !== undefined) (target as Record<string, unknown>)[key] = value;
@@ -533,7 +509,7 @@ export async function interpretTacticalInstructionsLocally(
         }
         patch = targetDirective(decision.intent, recipient, decision.confidence) ?? {};
       } else {
-        patch = { [decision.intent]: decision.value } as TacticalDirectives;
+        patch = semanticDirective(decision.intent, decision.value);
       }
 
       matchedClauses.add(decision.clauseIndex);

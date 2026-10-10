@@ -392,6 +392,8 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     bias += player.preferredFoot === inwardFoot ? 5.5 : -1;
     bias += (player.dribbling + player.agility + player.flair - 33) * 0.24;
     if (instructions.cutInside) bias += 16;
+    if (instructions.carryPath === "inside") bias += 23;
+    if (instructions.carryPath === "outside" || instructions.carryPath === "downLine") bias -= 10;
     if (hasTrait(player, PlaystyleTag.CreativeInsideForward)) bias += 9;
     if (input.tacticalRole === "InsideForward" || input.tacticalRole === "InvertedWinger") bias += 8;
     if (input.phase === "finish") bias += 5;
@@ -402,6 +404,9 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     bias += player.preferredFoot !== inwardFoot ? 4.5 : 0;
     bias += (player.pace + player.acceleration + player.crossing - 33) * 0.2;
     if (instructions.stayWide) bias += 15;
+    if (instructions.carryPath === "outside") bias += 19;
+    if (instructions.carryPath === "downLine") bias += seed.pattern === "bylineDrive" ? 28 : 20;
+    if (instructions.carryPath === "inside") bias -= 11;
     if (hasTrait(player, PlaystyleTag.Winger) || hasTrait(player, PlaystyleTag.Crosser)) bias += 6;
     if (hasTrait(player, PlaystyleTag.CutbackSpecialist) && seed.pattern === "bylineDrive") bias += 8;
     if (input.style === PlayStyle.WingPlay) bias += 10;
@@ -415,6 +420,8 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     if (input.style === PlayStyle.TotalFootball) bias += 7;
     if (["Mezzala", "AdvancedPlaymaker", "InvertedFullBack", "InvertedWinger"].includes(input.tacticalRole ?? "")) bias += 7;
     if (wide && instructions.cutInside) bias += 6;
+    if (instructions.carryPath === "inside") bias += 17;
+    if (instructions.carryPath === "outside" || instructions.carryPath === "downLine") bias -= 7;
     if (dribbling) bias += (dribbling.closeControl - 0.5) * 10 + (dribbling.inside - 0.5) * 6;
   }
 
@@ -433,6 +440,7 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     if (hasTrait(player, PlaystyleTag.PressResistant)) bias += 11;
     if (input.phase === "buildUp") bias += 3;
     if (instructions.holdPosition || instructions.defensiveDuty) bias += 13;
+    if (instructions.shieldBall) bias += 19;
     if (input.beatenOpponentId) bias -= 11;
     if (dribbling) bias += (dribbling.escape - 0.5) * 18 + (dribbling.shielding - 0.5) * 7;
   }

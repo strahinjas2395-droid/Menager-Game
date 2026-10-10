@@ -7,6 +7,7 @@ import TopBar from "@/components/TopBar";
 import StepDots from "@/components/StepDots";
 import InstructionInterpretationView from "@/components/InstructionInterpretationView";
 import PlayerRoleEditor from "@/components/PlayerRoleEditor";
+import StructuredInstructionEditor from "@/components/StructuredInstructionEditor";
 import { useGameStore } from "@/store/gameStore";
 import { assignTacticalNumbers, selectBestXI } from "@/engine/matchSimulator";
 import { pressingBehavior } from "@/engine/pressing";
@@ -103,6 +104,11 @@ export default function TacticsPage() {
           team: save.tacticalSetup.instructionCache?.team,
           players: { ...(save.tacticalSetup.instructionCache?.players ?? {}) },
         },
+        teamDirectiveOverrides: { ...(save.tacticalSetup.teamDirectiveOverrides ?? {}) },
+        playerDirectiveOverrides: Object.fromEntries(
+          Object.entries(save.tacticalSetup.playerDirectiveOverrides ?? {})
+            .map(([playerId, directives]) => [playerId, { ...directives }]),
+        ),
         playerRoles: { ...(save.tacticalSetup.playerRoles ?? {}) },
         setPieces: { ...save.tacticalSetup.setPieces },
         positionOverrides: { ...save.tacticalSetup.positionOverrides },
@@ -628,6 +634,12 @@ export default function TacticsPage() {
                 </div>
               </div>
 
+              <StructuredInstructionEditor
+                scope="team"
+                value={draft.teamDirectiveOverrides}
+                onChange={(value) => set("teamDirectiveOverrides", value)}
+              />
+
               <div className="border-t border-white/10 pt-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -710,6 +722,23 @@ export default function TacticsPage() {
               <p className="mt-2 rounded-lg border border-white/10 bg-navy p-2.5 text-[10px] leading-relaxed text-white/40">
                 Role and duty are assigned to the active XI. Move this player into the formation to configure their match job.
               </p>
+            )}
+
+            {selectedPlayer && (
+              <div className="mt-2">
+                <StructuredInstructionEditor
+                  scope="player"
+                  position={selectedSlotRole ?? selectedPlayer.primaryPosition}
+                  value={draft.playerDirectiveOverrides?.[selectedPlayer.id]}
+                  onChange={(value) => setDraft((current) => current ? {
+                    ...current,
+                    playerDirectiveOverrides: {
+                      ...(current.playerDirectiveOverrides ?? {}),
+                      [selectedPlayer.id]: value,
+                    },
+                  } : current)}
+                />
+              </div>
             )}
 
             <textarea
