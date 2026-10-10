@@ -39,7 +39,11 @@ npm run build      # production build
   and counter-press phases; role/formation-aware movement; short combinations, recycling,
   switches, through balls, target-man play, overlaps, crosses and cutbacks; contextual
   long shots and variable ball speeds; explicit air-ball/shadow cues; aerial, shielding,
-  tackling and loose-ball duels driven by player attributes.
+  tackling and loose-ball duels driven by player attributes. Ball carriers rank real
+  waypoint routes by reachable pitch control and possession value, producing inside cuts,
+  byline bursts, half-space/line-breaking carries, feints and pressure escapes with separate
+  ball touches. Nearby players recognise underlaps, come-short angles, give-and-go runs and
+  far-post cross-receiver movement while the rest of the side preserves its shape.
 - **Tactics setup**: 32 formations on a space-efficient vertical board, draggable pitch
   positions, traditional role numbers, tap-to-view player stat cards, dot-based controls,
   set-piece takers, captain, and persistent free-text instructions for both players and the

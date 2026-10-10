@@ -220,6 +220,14 @@ describe("MatchSimulator", () => {
     expect(analysis?.tacticalEvents?.length).toBeGreaterThan(40);
     expect(analysis?.tacticalEvents?.some((event) => event.type === "pass" || event.type === "throughBall")).toBe(true);
     expect(analysis?.tacticalEvents?.some((event) => event.type === "shot" && (event.expectedGoals ?? 0) > 0)).toBe(true);
+    const movementEvents = analysis?.tacticalEvents?.filter((event) =>
+      (event.type === "carry" || event.type === "dribble") && event.qualifier?.startsWith("movement:"),
+    ) ?? [];
+    expect(movementEvents.length).toBeGreaterThan(0);
+    expect(new Set(movementEvents.map((event) => event.qualifier?.split(";")[0])).size).toBeGreaterThan(1);
+    expect(movementEvents.some((event) =>
+      event.endY !== undefined && Math.abs(event.endY - event.y) > 15,
+    )).toBe(true);
     expect(analysis?.teamSummaries?.home.possessionSequences).toBeGreaterThan(0);
     expect(analysis?.passNetworks?.home.length).toBeGreaterThan(0);
 
@@ -545,6 +553,48 @@ describe("MatchSimulator", () => {
     const state = sim.getState();
     expect(state.ball.mode).toBe("flight");
     expect(state.ball.x).toBeGreaterThan(state.homePositions[runnerIndex].x + 5);
+    expect(state.homePositions[runnerIndex].intent).toBe("runBehind");
+  });
+
+  it("turns a won dribble into a lateral body-and-ball route around the defender", () => {
+    const { sim, home } = setup(6010);
+    const internal = simulatorHarness(sim);
+    const runnerIndex = Math.max(0, home.roles.findIndex((role) => role === "CM" || role === "CAM"));
+    const runner = internal.homePlayers[runnerIndex];
+    const defender = internal.awayPlayers.find((player) => player.role !== "GK")!;
+    runner.role = "CAM";
+    Object.assign(runner.p, {
+      pace: 17,
+      acceleration: 17,
+      agility: 19,
+      dribbling: 19,
+      flair: 18,
+      playstyles: [PlaystyleTag.Dribbler],
+    });
+    runner.x = 500;
+    runner.y = 325;
+    runner.vx = 42;
+    runner.vy = 0;
+    internal.awayPlayers.forEach((player, index) => {
+      player.x = 790;
+      player.y = 55 + index * 48;
+    });
+    defender.x = 532;
+    defender.y = 325;
+    sim.phase = "open";
+    internal.giveBallTo("home", runnerIndex);
+    internal.executeKnockOn("home", runner, true, defender.p.id);
+
+    const event = sim.getAnalysis().tacticalEvents?.at(-1);
+    expect(sim.getState().phase).toBe("flight");
+    expect(event).toMatchObject({ type: "dribble", playerId: runner.p.id });
+    expect(event?.qualifier).toMatch(/^movement:/);
+    expect(Math.abs((event?.endY ?? event?.y ?? 325) - (event?.y ?? 325))).toBeGreaterThan(18);
+
+    sim.tick(0.15);
+    const state = sim.getState();
+    expect(state.ball.mode).toBe("flight");
+    expect(Math.abs(state.ball.y - 325)).toBeGreaterThan(3);
     expect(state.homePositions[runnerIndex].intent).toBe("runBehind");
   });
 

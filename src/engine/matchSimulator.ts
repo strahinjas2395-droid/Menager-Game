@@ -76,6 +76,12 @@ import {
   type BrainAgent,
   type PlayerIntent,
 } from "@/engine/playerBrain";
+import {
+  chooseDribbleRoute,
+  type CarryPhase,
+  type DribblePattern,
+  type DribbleRoute,
+} from "@/engine/movementPatterns";
 
 export const PITCH_W = 1000;
 export const PITCH_H = 650;
@@ -139,6 +145,12 @@ export type Phase =
   | "halftime"
   | "fulltime";
 
+interface ActiveDribblePlan extends DribbleRoute {
+  waypointIndex: number;
+  startedAt: number;
+  expiresAt: number;
+}
+
 interface SimPlayer {
   p: Player;
   x: number;
@@ -153,6 +165,8 @@ interface SimPlayer {
   brainTy: number;
   brainNextAt: number;
   intent: PlayerIntent;
+  /** Stable multi-waypoint route chosen from control/value, not an animation state. */
+  dribblePlan: ActiveDribblePlan | null;
   nextTouchAt: number;
   lastKnockOnAt: number;
   /** Formation position such as CB, CM or ST. */
@@ -263,6 +277,8 @@ interface Flight {
   challengedIds?: string[];
   dribbleAttempt?: boolean;
   beatDefenderId?: string;
+  /** Structured qualifier for the physical route used to knock the ball on. */
+  movementPattern?: DribblePattern;
   countsAsPass?: boolean;
   penalty?: boolean;
   analyticsType?: TacticalEventType;
@@ -392,8 +408,8 @@ export interface MatchSnapshot {
     airborne: boolean;
     mode: "controlled" | "flight" | "loose" | "dead";
   };
-  homePositions: { x: number; y: number; speed: number; intent: PlayerIntent }[];
-  awayPositions: { x: number; y: number; speed: number; intent: PlayerIntent }[];
+  homePositions: { x: number; y: number; speed: number; intent: PlayerIntent; movementPattern?: DribblePattern }[];
+  awayPositions: { x: number; y: number; speed: number; intent: PlayerIntent; movementPattern?: DribblePattern }[];
   possession: Side | "loose";
   homeLineup: LineupEntry[];
   awayLineup: LineupEntry[];
@@ -587,7 +603,7 @@ export class MatchSimulator {
       return {
         p, x: base.x, y: base.y, tx: base.x, ty: base.y,
         vx: 0, vy: 0,
-        brainTx: base.x, brainTy: base.y, brainNextAt: 0, intent: "hold",
+        brainTx: base.x, brainTy: base.y, brainNextAt: 0, intent: "hold", dribblePlan: null,
         nextTouchAt: 0, lastKnockOnAt: -Infinity,
         role: side.roles[i] ?? "CM",
         roleAssignment: resolvePlayerRoleAssignment(
@@ -913,6 +929,93 @@ export class MatchSimulator {
   /** Seconds since this side last won possession (Infinity if no recent turnover). */
   private transitionAge(side: Side): number {
     return this.lastTurnover?.side === side ? this.worldTime - this.lastTurnover.t : Infinity;
+  }
+
+  private carryPhase(side: Side, sp: SimPlayer): CarryPhase {
+    if (this.transitionAge(side) < 6) return "transition";
+    const viewedX = side === "home" ? sp.x : PITCH_W - sp.x;
+    if (viewedX < 360) return "buildUp";
+    if (viewedX > 690) return "finish";
+    return "create";
+  }
+
+  private chooseCarrierRoute(side: Side, sp: SimPlayer, beatenOpponentId?: string): DribbleRoute {
+    const targeted = beatenOpponentId
+      ? undefined
+      : this.attackingPlanNear(side, sp.x, sp.y, ["pace", "dribble"]);
+    const activeTarget = targeted && targeted.distance < 210 ? targeted : undefined;
+    return chooseDribbleRoute({
+      player: sp.p,
+      role: sp.role,
+      tacticalRole: sp.roleAssignment.role,
+      current: { x: sp.x, y: sp.y },
+      velocity: { x: sp.vx, y: sp.vy },
+      opponents: this.players(this.other(side))
+        .filter((opponent) => !opponent.sentOff)
+        .map((opponent) => ({
+          id: opponent.p.id,
+          x: opponent.x,
+          y: opponent.y,
+          pace: opponent.p.pace,
+          acceleration: opponent.p.acceleration,
+          anticipation: opponent.p.anticipation,
+        })),
+      teammates: this.players(side)
+        .filter((teammate) => teammate !== sp && !teammate.sentOff)
+        .map((teammate) => ({ x: teammate.x, y: teammate.y })),
+      attackingDirection: this.attackDir(side),
+      pressure: this.pressureOn(side, this.indexOfPlayer(side, sp)),
+      phase: this.carryPhase(side, sp),
+      style: this.team(side).tactics.playStyle,
+      instructions: this.directives(side, sp),
+      beatenOpponentId,
+      targetOpponentId: activeTarget?.target.p.id,
+      targetApproach: activeTarget?.instruction.attackApproach === "pace" || activeTarget?.instruction.attackApproach === "dribble"
+        ? activeTarget.instruction.attackApproach
+        : undefined,
+    });
+  }
+
+  private installDribblePlan(
+    side: Side,
+    sp: SimPlayer,
+    beatenOpponentId?: string,
+    route = this.chooseCarrierRoute(side, sp, beatenOpponentId),
+  ): ActiveDribblePlan {
+    const active: ActiveDribblePlan = {
+      ...route,
+      waypoints: route.waypoints.map((point) => ({ ...point })),
+      waypointIndex: 0,
+      startedAt: this.worldTime,
+      expiresAt: this.worldTime + route.durationSeconds,
+    };
+    sp.dribblePlan = active;
+    sp.intent = "carry";
+    return active;
+  }
+
+  private currentDribbleTarget(side: Side, sp: SimPlayer, pressure: number): { plan: ActiveDribblePlan; point: { x: number; y: number } } {
+    let plan = sp.dribblePlan;
+    if (
+      !plan || this.worldTime >= plan.expiresAt ||
+      (pressure > 0.68 && plan.pitchControl < 0.48 &&
+       plan.pattern !== "escapeTurn" && this.worldTime - plan.startedAt > 0.3)
+    ) {
+      plan = this.installDribblePlan(side, sp);
+    }
+
+    while (
+      plan.waypointIndex < plan.waypoints.length &&
+      Math.hypot(sp.x - plan.waypoints[plan.waypointIndex].x, sp.y - plan.waypoints[plan.waypointIndex].y) < 13
+    ) {
+      plan.waypointIndex += 1;
+    }
+    if (plan.waypointIndex >= plan.waypoints.length) plan = this.installDribblePlan(side, sp);
+    return { plan, point: plan.waypoints[plan.waypointIndex] };
+  }
+
+  private movementQualifier(route: DribbleRoute): string {
+    return `movement:${route.pattern};control:${route.pitchControl.toFixed(2)};value:${route.possessionValueGain.toFixed(2)}`;
   }
 
   /** Apply tactical changes immediately without restarting the match. */
@@ -1290,12 +1393,14 @@ export class MatchSimulator {
         y: p.y,
         speed: Math.hypot(p.vx, p.vy) / UNITS_PER_METER,
         intent: p.intent,
+        movementPattern: p.dribblePlan?.pattern,
       })),
       awayPositions: this.awayPlayers.map((p) => ({
         x: p.x,
         y: p.y,
         speed: Math.hypot(p.vx, p.vy) / UNITS_PER_METER,
         intent: p.intent,
+        movementPattern: p.dribblePlan?.pattern,
       })),
       possession: this.carrier
         ? this.carrier.side
@@ -1378,6 +1483,7 @@ export class MatchSimulator {
     target.conditionBefore = playerCondition(benchPlayer);
     target.energy = matchStartingEnergy(benchPlayer);
     target.runUntil = 0;
+    target.dribblePlan = null;
     target.vx = 0;
     target.vy = 0;
     target.brainNextAt = this.worldTime;
@@ -1478,6 +1584,7 @@ export class MatchSimulator {
         sp.brainTy = base.y;
         sp.brainNextAt = this.worldTime;
         sp.intent = "hold";
+        sp.dribblePlan = null;
       });
     }
   }
@@ -1707,59 +1814,29 @@ export class MatchSimulator {
           }
         }
 
-        // Ball carrier drives into the next available line rather than walking
-        // straight forward regardless of role/style. Under pressure they keep
-        // their feet moving, turn away from contact and protect the ball while
-        // the shortened decision timer finds the release.
+        // The carrier follows a stable, scored route through reachable space.
+        // Candidate paths include line breaks, half-space diagonals, cuts,
+        // byline bursts, feints and pressure escapes. The normal acceleration
+        // and independent-touch physics execute the route waypoint by waypoint.
         if (this.carrier && this.carrier.side === side && this.carrier.i === i) {
           const pressure = this.pressureOn(side, i);
-          const drive = directive.defensiveDuty ? 18 : directStyle || justWon ? 68 : possessionStyle ? 28 : 45;
-          sp.tx = clamp(sp.x + dir * drive * (1 - pressure * 0.32), 20, 980);
-          if (directive.stayWide) {
-            sp.ty = sp.y < 325 ? 55 : 595;
-          } else if (directive.cutInside || sp.role === "ST" || sp.role === "CF") {
-            sp.ty = 325 + (sp.y - 325) * 0.55;
-          } else {
-            // Carry toward the least crowded neighbouring lane.
-            const upper = this.opponentsWithin(side, sp.x + dir * 50, sp.y - 55, 9);
-            const lower = this.opponentsWithin(side, sp.x + dir * 50, sp.y + 55, 9);
-            sp.ty = clamp(sp.y + (upper < lower ? -28 : upper > lower ? 28 : 0), 18, 632);
-          }
+          const { plan, point } = this.currentDribbleTarget(side, sp, pressure);
+          sp.tx = clamp(point.x, 20, 980);
+          sp.ty = clamp(point.y, 18, 632);
+          sp.intent = "carry";
 
           const carrierTargeting = this.attackingPlanNear(side, sp.x, sp.y, ["pace", "dribble"]);
           if (carrierTargeting && sp.role !== "GK" && carrierTargeting.distance < 210) {
-            const { instruction, target } = carrierTargeting;
-            sp.tx = clamp(target.x + dir * (instruction.attackApproach === "pace" ? 78 : 34), 20, 980);
-            sp.ty = clamp(target.y + (sp.y <= target.y ? -22 : 22), 18, 632);
-            sp.runUntil = Math.max(sp.runUntil, this.worldTime + (instruction.attackApproach === "pace" ? 1.05 : 0.72));
+            sp.runUntil = Math.max(
+              sp.runUntil,
+              this.worldTime + (carrierTargeting.instruction.attackApproach === "pace" ? 1.05 : 0.72),
+            );
           }
 
-          const closest = pressure > 0.2 ? this.closestOpponent(side, sp) : null;
-          if (closest) {
-            const separation = Math.hypot(closest.x - sp.x, closest.y - sp.y) / UNITS_PER_METER;
-            if (separation < 7.5) {
-              const upper = this.opponentsWithin(side, sp.x, sp.y - 58, 8);
-              const lower = this.opponentsWithin(side, sp.x, sp.y + 58, 8);
-              const awayY = sp.y - closest.y;
-              const escapeSign = Math.abs(awayY) > 7
-                ? Math.sign(awayY)
-                : upper !== lower
-                  ? (upper < lower ? -1 : 1)
-                  : (i % 2 === 0 ? -1 : 1);
-              const protectedY = sp.y + escapeSign * (30 + pressure * 30);
-              sp.ty = clamp(sp.ty * 0.35 + protectedY * 0.65, 18, 632);
-
-              // At the attacking goal line there is no forward space. Turning
-              // back into play is visibly active and creates a cutback/pass,
-              // instead of pinning the carrier motionless at x=20/980.
-              if (Math.abs(this.goalX(side) - sp.x) < 38) {
-                sp.tx = clamp(sp.x - dir * (9 + pressure * 12), 20, 980);
-              }
-            }
-          }
-
-          this.drainEnergy(sp, dt, 1.15);
-          this.movePlayer(sp, dt, directive.conserveEnergy ? 0.4 : 0.56);
+          const burst = sp.runUntil > this.worldTime ? Math.max(0.92, plan.intensity) : plan.intensity;
+          const intensity = directive.conserveEnergy ? Math.min(0.52, burst) : burst;
+          this.drainEnergy(sp, dt, 0.72 + intensity * 0.62);
+          this.movePlayer(sp, dt, intensity);
           this.tickControlledBall(side, sp, dt, pressure);
           return;
         }
@@ -1970,7 +2047,7 @@ export class MatchSimulator {
         // forward given this job drops into the block, stays behind attacking
         // play, tracks a nearby opponent and can become a real presser.
         if (directive.defensiveDuty) {
-          const anchorFromOwnGoal = hasBall ? 405 : 312;
+          const anchorFromOwnGoal = hasBall ? 380 : 285;
           tx = this.ownGoalX(side) + dir * anchorFromOwnGoal + ballShiftX * 0.28;
           ty = 325 + (this.ball.y - 325) * (hasBall ? 0.32 : 0.48);
           if (!hasBall) {
@@ -2115,7 +2192,9 @@ export class MatchSimulator {
         sp.tx = clamp(tx, 18, 982);
         sp.ty = clamp(ty, 12, 638);
         const sprinting = isPresser || sp.runUntil > this.worldTime || (justWon && isForward);
-        const activeRun = hasBall && (sp.intent === "runBehind" || sp.intent === "overlap");
+        const activeRun = hasBall && [
+          "runBehind", "overlap", "underlap", "comeShort", "crossReceiver", "giveAndGo", "pullWide",
+        ].includes(sp.intent);
         this.drainEnergy(sp, dt, sprinting ? 1.35 : activeRun ? 1.05 : hasBall ? 0.72 : 0.55);
         this.movePlayer(
           sp,
@@ -2230,8 +2309,11 @@ export class MatchSimulator {
       );
       const speedMps = speed / UNITS_PER_METER;
       let leadM = 0.68 + speedMps * cadence * (0.68 + closeControl * 0.17);
+      // Bursts use a longer touch into grass; cuts/feints/escape turns keep the
+      // ball closer. Either way the ball travels independently to the target.
+      leadM *= sp.dribblePlan?.touchScale ?? 1;
       leadM *= 1 - pressure * (pressResistant ? 0.28 : 0.42);
-      leadM = clamp(leadM, 0.62, 2.75);
+      leadM = clamp(leadM, 0.58, 3.15);
 
       // A skilled carrier nudges away from the nearest challenge without
       // changing the player's body position instantaneously.
@@ -2428,8 +2510,9 @@ export class MatchSimulator {
     // In real matches a receiver with grass in front is allowed to take the
     // first touch and advance. Team identity and individual traits decide
     // whether that becomes a patient carry or an explosive knock-on.
-    const channelX = sp.x + dir * 78;
-    const channelOpen = this.opponentsWithin(side, channelX, sp.y, 8.5) === 0;
+    const carryRoute = this.chooseCarrierRoute(side, sp);
+    const carryEnd = carryRoute.waypoints[carryRoute.waypoints.length - 1];
+    const channelOpen = carryRoute.pitchControl > 0.42 && carryRoute.laneClearanceM > 2.2;
     const paceAbuser = hasPlaystyle(sp.p, PlaystyleTag.PaceAbuser);
     const carryQuality = (sp.p.dribbling + sp.p.ballControl + sp.p.decisions) / 60;
     const plannedCarry = nearbyAttackPlan?.attackApproach === "pace" ? 0.2 :
@@ -2448,19 +2531,9 @@ export class MatchSimulator {
       if (side === "home") this.stats.carriesHome += 1;
       else this.stats.carriesAway += 1;
       this.addPlayerStat(sp.p.id, "carries");
-      this.recordTacticalEvent({
-        side,
-        type: "carry",
-        outcome: "complete",
-        playerId: sp.p.id,
-        x: sp.x,
-        y: sp.y,
-        endX: channelX,
-        endY: sp.y,
-        pressure,
-      });
       if (
         (paceAbuser || (sp.p.pace >= 16 && behavior.transition > 1.2)) &&
+        carryRoute.safeKnockOnM >= 4.2 &&
         this.worldTime - sp.lastKnockOnAt > 2.2 &&
         this.rng.chance(clamp(
           (paceAbuser ? 0.58 : 0.3) * behavior.directness * behavior.transition * behavior.carryBias,
@@ -2468,10 +2541,22 @@ export class MatchSimulator {
           0.82,
         ))
       ) {
-        this.executeKnockOn(side, sp, false);
+        this.executeKnockOn(side, sp, false, undefined, carryRoute);
         return;
       }
-      sp.intent = "carry";
+      this.recordTacticalEvent({
+        side,
+        type: "carry",
+        outcome: "complete",
+        playerId: sp.p.id,
+        x: sp.x,
+        y: sp.y,
+        endX: carryEnd.x,
+        endY: carryEnd.y,
+        pressure,
+        qualifier: this.movementQualifier(carryRoute),
+      });
+      this.installDribblePlan(side, sp, undefined, carryRoute);
       sp.runUntil = Math.max(sp.runUntil, this.worldTime + (paceAbuser ? 1.15 : 0.78));
       this.decisionCd = this.decisionDelay(side, sp, paceAbuser ? 0.82 : 1.05);
       return;
@@ -2502,6 +2587,7 @@ export class MatchSimulator {
       if (defender && seekShield && this.rng.chance(targetManStyle ? 0.58 : 0.32)) {
         if (resolveHoldOff(sp.p, defender.p, this.rng)) {
           defender.tackleCd = Math.max(defender.tackleCd, 0.65);
+          this.installDribblePlan(side, sp, defender.p.id);
           sp.runUntil = Math.max(sp.runUntil, this.worldTime + 0.8);
           this.bumpRating(sp, 0.025);
           this.decisionCd = this.decisionDelay(side, sp, 0.55);
@@ -2583,27 +2669,65 @@ export class MatchSimulator {
       return;
     }
 
-    // No passing lane: carry into space briefly, then reassess.
+    // No passing lane: take the best controllable route into useful space,
+    // then reassess rather than defaulting to a straight run.
+    this.installDribblePlan(side, sp, undefined, carryRoute);
     sp.runUntil = Math.max(sp.runUntil, this.worldTime + 0.7);
     this.decisionCd = this.decisionDelay(side, sp, 0.7);
   }
 
   /** A deliberate longer touch creates a physical race between attacker and cover. */
-  private executeKnockOn(side: Side, sp: SimPlayer, dribbleAttempt: boolean, beatDefenderId?: string): void {
-    const dir = this.attackDir(side);
+  private executeKnockOn(
+    side: Side,
+    sp: SimPlayer,
+    dribbleAttempt: boolean,
+    beatDefenderId?: string,
+    plannedRoute = this.chooseCarrierRoute(side, sp, beatDefenderId),
+  ): void {
     const idx = this.indexOfPlayer(side, sp);
     const goalDistance = Math.abs(this.goalX(side) - sp.x);
     const paceTrait = hasPlaystyle(sp.p, PlaystyleTag.PaceAbuser);
-    const leadM = clamp(
-      3.2 + (sp.p.pace + sp.p.acceleration - 20) * 0.14 + (paceTrait ? 1.8 : 0) + this.rng.float(-0.45, 0.75),
-      3.1,
-      Math.min(9.2, Math.max(3.1, goalDistance / UNITS_PER_METER - 2)),
+    const routeEnd = plannedRoute.waypoints[plannedRoute.waypoints.length - 1];
+    const routeDx = routeEnd.x - sp.x;
+    const routeDy = routeEnd.y - sp.y;
+    const routeDistance = Math.hypot(routeDx, routeDy) || 1;
+
+    // Winning the initial duel does not guarantee enough grass for a long
+    // touch. In a crowded lane the attacker uses the same route with close
+    // control, leaving cover defenders able to recover and tackle normally.
+    if (dribbleAttempt && plannedRoute.safeKnockOnM < 3.1) {
+      if (side === "home") this.stats.dribblesCompletedHome += 1;
+      else this.stats.dribblesCompletedAway += 1;
+      this.addPlayerStat(sp.p.id, "dribblesCompleted");
+      this.recordTacticalEvent({
+        side,
+        type: "dribble",
+        outcome: "won",
+        playerId: sp.p.id,
+        relatedPlayerId: beatDefenderId,
+        x: sp.x,
+        y: sp.y,
+        endX: routeEnd.x,
+        endY: routeEnd.y,
+        pressure: this.pressureOn(side, idx),
+        qualifier: this.movementQualifier(plannedRoute),
+      });
+      this.installDribblePlan(side, sp, beatDefenderId, plannedRoute);
+      sp.runUntil = Math.max(sp.runUntil, this.worldTime + 0.85);
+      this.decisionCd = this.decisionDelay(side, sp, 0.7);
+      return;
+    }
+
+    const desiredLeadM = 3.2 + (sp.p.pace + sp.p.acceleration - 20) * 0.14 +
+      (paceTrait ? 1.8 : 0) + this.rng.float(-0.45, 0.75);
+    const maximumLeadM = Math.min(
+      9.2,
+      Math.max(3.1, goalDistance / UNITS_PER_METER - 2),
+      Math.max(3.1, plannedRoute.safeKnockOnM),
     );
-    const upper = this.opponentsWithin(side, sp.x + dir * 62, sp.y - 45, 7);
-    const lower = this.opponentsWithin(side, sp.x + dir * 62, sp.y + 45, 7);
-    const laneY = upper < lower ? -0.24 : lower < upper ? 0.24 : 0;
-    const toX = clamp(sp.x + dir * leadM * UNITS_PER_METER, 8, 992);
-    const toY = clamp(sp.y + laneY * leadM * UNITS_PER_METER, 8, 642);
+    const leadM = clamp(desiredLeadM, 3.1, maximumLeadM);
+    const toX = clamp(sp.x + (routeDx / routeDistance) * leadM * UNITS_PER_METER, 8, 992);
+    const toY = clamp(sp.y + (routeDy / routeDistance) * leadM * UNITS_PER_METER, 8, 642);
     const distanceM = Math.hypot(toX - this.ball.x, toY - this.ball.y) / UNITS_PER_METER;
 
     sp.lastKnockOnAt = this.worldTime;
@@ -2624,6 +2748,7 @@ export class MatchSimulator {
       challengedIds: [],
       dribbleAttempt,
       beatDefenderId,
+      movementPattern: plannedRoute.pattern,
       passerId: sp.p.id,
     });
     this.lastTouchSide = side;
@@ -3272,11 +3397,16 @@ export class MatchSimulator {
       endX: f.toX,
       endY: f.toY,
       pressure,
-      qualifier: f.penalty ? "penalty" : f.flavor,
+      qualifier: f.penalty
+        ? "penalty"
+        : f.movementPattern
+          ? `movement:${f.movementPattern}`
+          : f.flavor,
       expectedGoals: f.kind === "shot" ? expectedGoalsAt(start.x, start.y, pressure, f.penalty ? "penalty" : undefined) : undefined,
     });
     f.analyticsEventId = eventId;
     if (f.kind !== "shot") this.pendingFlightEventId = eventId;
+    if (actor) actor.dribblePlan = null;
     this.flight = f;
     this.ballHeight = 0;
     this.controlledBallVelocity = { x: 0, y: 0 };
@@ -3768,6 +3898,10 @@ export class MatchSimulator {
   }
 
   private giveBallTo(side: Side, idx: number): void {
+    const previousCarrier = this.carrier
+      ? this.players(this.carrier.side)[this.carrier.i]
+      : undefined;
+    if (previousCarrier) previousCarrier.dribblePlan = null;
     const p = this.players(side)[idx];
     if (!p || p.sentOff) {
       this.makeLoose(this.ball.x, this.ball.y, side);
@@ -3802,6 +3936,7 @@ export class MatchSimulator {
     }
     this.looseDribbleRace = null;
     this.carrier = { side, i: idx };
+    p.dribblePlan = null;
     this.possessionSide = side;
     this.lastTouchSide = side;
     this.flight = null;
@@ -3823,6 +3958,7 @@ export class MatchSimulator {
   /** `lockSide` is the side that last lost/touched the ball and cannot reclaim
    * it for a fraction of a second; this prevents instant ping-pong rebounds. */
   private makeLoose(x: number, y: number, lockSide: Side, vx = 0, vy = 0): void {
+    if (this.carrier) this.players(this.carrier.side)[this.carrier.i].dribblePlan = null;
     this.carrier = null;
     this.flight = null;
     this.phase = "open";
@@ -3937,6 +4073,7 @@ export class MatchSimulator {
       if (shielding && this.rng.chance(targetManStyle ? 0.54 : 0.28)) {
         if (resolveHoldOff(sp.p, op.p, this.rng)) {
           this.bumpRating(sp, 0.02);
+          this.installDribblePlan(side, sp, op.p.id);
           sp.runUntil = Math.max(sp.runUntil, this.worldTime + 0.6);
           return;
         }
@@ -3974,7 +4111,9 @@ export class MatchSimulator {
         this.awardFoul(side, op, sp, res.card);
         return;
       }
-      // Failed standing challenge: attacker escapes into the space behind.
+      // Failed standing challenge: attacker exits around the wrong-footed
+      // defender, with cover players still able to recover into the route.
+      this.installDribblePlan(side, sp, op.p.id);
       sp.runUntil = Math.max(sp.runUntil, this.worldTime + 0.9);
       this.bumpRating(op, -0.03);
       return;

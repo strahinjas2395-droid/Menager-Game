@@ -113,4 +113,142 @@ describe("player brain", () => {
     expect(target.x).toBeGreaterThan(700);
     expect(target.x).toBeLessThan(740); // holds the shoulder until the pass is kicked
   });
+
+  it("underlaps a wide carrier through the inside channel", () => {
+    const p = player({ id: "left-back", offTheBall: 17, playstyles: [] });
+    const target = chooseSpatialTarget({
+      player: p,
+      playerIndex: 3,
+      role: "LB",
+      current: { x: 480, y: 105 },
+      baseTarget: { x: 500, y: 105 },
+      ball: { x: 575, y: 72 },
+      carrier: { x: 575, y: 72 },
+      teammates: [
+        { id: "left-back", role: "LB", x: 480, y: 105 },
+        { id: "winger", role: "LW", x: 575, y: 72 },
+      ],
+      opponents: [
+        { id: "full-back", role: "RB", x: 650, y: 80 },
+        { id: "cover", role: "CB", x: 720, y: 300 },
+      ],
+      attackingDirection: 1,
+      style: PlayStyle.TotalFootball,
+      hasPossession: true,
+      transitionAge: 8,
+      runActive: false,
+      stayWide: false,
+      cutInside: true,
+      holdPosition: false,
+      forwardRuns: false,
+    });
+
+    expect(target.intent).toBe("underlap");
+    expect(target.x).toBeGreaterThan(575);
+    expect(target.y).toBeGreaterThan(105);
+    expect(target.y).toBeLessThan(325);
+  });
+
+  it("comes short to give a pressured carrier a wall-pass option", () => {
+    const p = player({ id: "nine", offTheBall: 16, teamwork: 17, playstyles: [] });
+    const target = chooseSpatialTarget({
+      player: p,
+      playerIndex: 9,
+      role: "ST",
+      current: { x: 705, y: 330 },
+      baseTarget: { x: 735, y: 330 },
+      ball: { x: 515, y: 325 },
+      carrier: { x: 515, y: 325 },
+      teammates: [{ id: "nine", role: "ST", x: 705, y: 330 }],
+      opponents: [
+        { id: "presser", role: "CDM", x: 535, y: 330 },
+        { id: "cb1", role: "CB", x: 790, y: 270 },
+        { id: "cb2", role: "CB", x: 800, y: 390 },
+      ],
+      attackingDirection: 1,
+      style: PlayStyle.TikiTaka,
+      hasPossession: true,
+      transitionAge: 9,
+      runActive: false,
+      stayWide: false,
+      cutInside: false,
+      holdPosition: false,
+      forwardRuns: false,
+    });
+
+    expect(target.intent).toBe("comeShort");
+    expect(target.x).toBeLessThan(705);
+    expect(target.x).toBeGreaterThan(515);
+  });
+
+  it("occupies the far-post channel when a wide carrier can cross", () => {
+    const p = player({
+      id: "box-runner",
+      offTheBall: 18,
+      heading: 17,
+      playstyles: [PlaystyleTag.AerialThreat],
+    });
+    const target = chooseSpatialTarget({
+      player: p,
+      playerIndex: 9,
+      role: "ST",
+      current: { x: 690, y: 340 },
+      baseTarget: { x: 735, y: 325 },
+      ball: { x: 720, y: 75 },
+      carrier: { x: 720, y: 75 },
+      teammates: [{ id: "box-runner", role: "ST", x: 690, y: 340 }],
+      opponents: [
+        { id: "cb1", role: "CB", x: 845, y: 265 },
+        { id: "cb2", role: "CB", x: 850, y: 400 },
+        { id: "gk", role: "GK", x: 960, y: 325 },
+      ],
+      attackingDirection: 1,
+      style: PlayStyle.WingPlay,
+      hasPossession: true,
+      transitionAge: 8,
+      runActive: false,
+      stayWide: false,
+      cutInside: false,
+      holdPosition: false,
+      forwardRuns: false,
+    });
+
+    expect(target.intent).toBe("crossReceiver");
+    expect(target.x).toBeGreaterThan(720);
+    expect(target.y).toBeGreaterThan(400);
+  });
+
+  it("continues a give-and-go beyond the new ball carrier", () => {
+    const p = player({ id: "wall-passer", offTheBall: 17, acceleration: 17, playstyles: [] });
+    const target = chooseSpatialTarget({
+      player: p,
+      playerIndex: 7,
+      role: "CM",
+      current: { x: 555, y: 270 },
+      baseTarget: { x: 550, y: 270 },
+      ball: { x: 590, y: 325 },
+      carrier: { x: 590, y: 325 },
+      teammates: [
+        { id: "wall-passer", role: "CM", x: 555, y: 270 },
+        { id: "receiver", role: "CAM", x: 590, y: 325 },
+      ],
+      opponents: [
+        { id: "screen", role: "CDM", x: 640, y: 330 },
+        { id: "cover", role: "CB", x: 760, y: 390 },
+      ],
+      attackingDirection: 1,
+      style: PlayStyle.TikiTaka,
+      hasPossession: true,
+      transitionAge: 7,
+      runActive: true,
+      stayWide: false,
+      cutInside: false,
+      holdPosition: false,
+      forwardRuns: false,
+    });
+
+    expect(target.intent).toBe("giveAndGo");
+    expect(target.x).toBeGreaterThan(650);
+    expect(Math.abs(target.y - 325)).toBeGreaterThan(25);
+  });
 });

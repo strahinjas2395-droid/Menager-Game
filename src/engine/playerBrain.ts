@@ -5,6 +5,11 @@ export type PlayerIntent =
   | "hold"
   | "support"
   | "overlap"
+  | "underlap"
+  | "comeShort"
+  | "crossReceiver"
+  | "pullWide"
+  | "giveAndGo"
   | "runBehind"
   | "recover"
   | "cover"
@@ -259,6 +264,89 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
         y: input.current.y < 325 ? 42 : 608,
         intent: "overlap",
         bias: 8 * profile.attackingWidth + (fullBack ? 3 : 0),
+      });
+    }
+
+    const carrierWide = carrier.y < 175 || carrier.y > 475;
+    const carrierViewedX = dir > 0 ? carrier.x : 1000 - carrier.x;
+    const sameFlank = (input.current.y < 325) === (carrier.y < 325);
+    const carrierPressure = nearestDistance(carrier, input.opponents);
+
+    // Underlap: a full-back, wide midfielder or roaming central midfielder
+    // attacks the inside shoulder while a wide carrier pins the outside
+    // defender. Explicit width instructions still favour the overlap above.
+    const depthFromCarrier = (input.current.x - carrier.x) * dir;
+    if (
+      carrierWide && sameFlank && !input.stayWide &&
+      (fullBack || ["RM", "LM", "CM", "CAM"].includes(input.role)) &&
+      depthFromCarrier > -220 && depthFromCarrier < 70
+    ) {
+      candidates.push({
+        x: carrier.x + dir * (82 + input.player.offTheBall * 2.1),
+        y: carrier.y + (325 - carrier.y) * 0.48,
+        intent: "underlap",
+        bias: 9 + (input.cutInside ? 3 : 0) +
+          (input.style === PlayStyle.TotalFootball || input.style === PlayStyle.TikiTaka ? 4 : 0) +
+          (hasPlaystyle(input.player, PlaystyleTag.FullBackRunner) ? 4 : 0),
+      });
+    }
+
+    // A pressured ball-holder needs somebody to come towards the pass rather
+    // than every attacker sprinting away. This creates a wall-pass option and
+    // lets possession teams escape a press through a third-player angle.
+    const aheadOfCarrier = (input.current.x - carrier.x) * dir;
+    if (
+      forwardRole && aheadOfCarrier > 60 && aheadOfCarrier < 280 &&
+      (carrierPressure < 72 || profile.circulation > 1.25)
+    ) {
+      candidates.push({
+        x: carrier.x + dir * (58 + profile.supportDistance * 1.8),
+        y: carrier.y + laneSign * Math.min(72, support * 0.45),
+        intent: "comeShort",
+        bias: 9 + (carrierPressure < 55 ? 7 : 0) + profile.circulation * 3 +
+          (hasPlaystyle(input.player, PlaystyleTag.Playmaker) ? 4 : 0),
+      });
+    }
+
+    // Once a short combination is played, runActive identifies the original
+    // passer. They accelerate beyond the new carrier on a different lane: an
+    // actual give-and-go continuation rather than a commentary-only event.
+    if (input.runActive && !input.holdPosition) {
+      candidates.push({
+        x: carrier.x + dir * (88 + input.player.acceleration * 2.8),
+        y: carrier.y + laneSign * 48,
+        intent: "giveAndGo",
+        bias: 17 + input.player.offTheBall * 0.35 + profile.circulation * 2,
+      });
+    }
+
+    // Wide possession in the creation/final-third zone triggers a restrained
+    // far-post/penalty-spot run. Only forwards on the opposite/central lane are
+    // eligible, preventing the whole side from abandoning rest defence.
+    const oppositeOrCentral = Math.abs(input.current.y - 325) < 115 || !sameFlank;
+    if (carrierWide && carrierViewedX > 575 && forwardRole && oppositeOrCentral) {
+      const line = secondLastDefenderX(input.opponents, dir);
+      const onsideShoulder = line - dir * 16;
+      const desiredX = carrier.x + dir * (95 + input.player.offTheBall * 2.4);
+      candidates.push({
+        x: dir > 0 ? Math.min(desiredX, onsideShoulder) : Math.max(desiredX, onsideShoulder),
+        y: carrier.y < 325 ? 445 : 205,
+        intent: "crossReceiver",
+        bias: 10 + profile.crossing * 5 + input.player.offTheBall * 0.2 +
+          (hasPlaystyle(input.player, PlaystyleTag.Poacher) || hasPlaystyle(input.player, PlaystyleTag.AerialThreat) ? 5 : 0),
+      });
+    }
+
+    // Against a compact central block, one eligible attacker can pull towards
+    // the weak-side touchline to create the next lane without destroying the
+    // team's central support structure.
+    if (!carrierWide && (wideRole || forwardRole) && profile.attackingWidth > 1.05) {
+      const weakSideY = input.current.y < 325 ? 62 : 588;
+      candidates.push({
+        x: carrier.x + dir * (forwardRole ? 72 : 32),
+        y: weakSideY,
+        intent: "pullWide",
+        bias: 6 + profile.attackingWidth * 5 + (input.stayWide ? 5 : 0),
       });
     }
   }
