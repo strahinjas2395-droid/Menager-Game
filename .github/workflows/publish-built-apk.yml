@@ -32,7 +32,7 @@ jobs:
             --name FootballManagerContinental-Android \
             --dir artifacts
           test -s artifacts/FootballManagerContinental-debug.apk
-          sha256sum --check artifacts/FootballManagerContinental-debug.apk.sha256
+          (cd artifacts && sha256sum --check FootballManagerContinental-debug.apk.sha256)
 
       - name: Publish APK to this branch
         run: |
