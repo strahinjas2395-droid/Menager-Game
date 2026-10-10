@@ -451,7 +451,7 @@ export default function TacticsPage() {
                     title={`${p.firstName} ${p.lastName} · #${number} ${xi.roles[i]} · tap for stats, drag to move`}
                   >
                     <span
-                      className={`flex h-5 w-5 items-center justify-center rounded-full border-2 text-[8px] font-black shadow-md sm:h-7 sm:w-7 sm:text-[10px] ${
+                      className={`flex h-4 w-4 items-center justify-center rounded-full border text-[7px] font-black shadow-md sm:h-5 sm:w-5 sm:text-[8px] ${
                         isGK
                           ? "border-yellow-300 bg-navy text-yellow-300"
                           : dragPos

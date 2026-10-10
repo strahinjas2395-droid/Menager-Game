@@ -14,6 +14,13 @@ function emptyStats(): MatchStats {
     tacklesHome: 15,
     foulsHome: 10,
     cornersHome: 4,
+    carriesHome: 42,
+    throwInsHome: 18,
+    crossesHome: 12,
+    throughBallsHome: 2,
+    dribblesAttemptedHome: 14,
+    dribblesCompletedHome: 7,
+    knockOnsHome: 4,
     possessionAway: 50,
     shotsAway: 5,
     shotsOnTargetAway: 2,
@@ -22,6 +29,13 @@ function emptyStats(): MatchStats {
     tacklesAway: 15,
     foulsAway: 10,
     cornersAway: 4,
+    carriesAway: 42,
+    throwInsAway: 18,
+    crossesAway: 12,
+    throughBallsAway: 2,
+    dribblesAttemptedAway: 14,
+    dribblesCompletedAway: 7,
+    knockOnsAway: 4,
   };
 }
 

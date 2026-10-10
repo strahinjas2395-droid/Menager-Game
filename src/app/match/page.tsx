@@ -1065,9 +1065,16 @@ function StatsBlock({ stats, home, away }: { stats: MatchStats; home: string; aw
     ["Pass acc %",
       stats.passesAttemptedHome ? Math.round((stats.passesCompletedHome / stats.passesAttemptedHome) * 100) : 0,
       stats.passesAttemptedAway ? Math.round((stats.passesCompletedAway / stats.passesAttemptedAway) * 100) : 0],
+    ["Carries", stats.carriesHome ?? 0, stats.carriesAway ?? 0],
+    ["Dribble attempts", stats.dribblesAttemptedHome ?? 0, stats.dribblesAttemptedAway ?? 0],
+    ["Dribbles won", stats.dribblesCompletedHome ?? 0, stats.dribblesCompletedAway ?? 0],
+    ["Knock-ons", stats.knockOnsHome ?? 0, stats.knockOnsAway ?? 0],
+    ["Through balls", stats.throughBallsHome ?? 0, stats.throughBallsAway ?? 0],
+    ["Crosses", stats.crossesHome ?? 0, stats.crossesAway ?? 0],
     ["Tackles", stats.tacklesHome, stats.tacklesAway],
     ["Fouls", stats.foulsHome, stats.foulsAway],
     ["Corners", stats.cornersHome, stats.cornersAway],
+    ["Throw-ins", stats.throwInsHome ?? 0, stats.throwInsAway ?? 0],
   ];
   return (
     <div className="mt-4">
@@ -1099,7 +1106,7 @@ function StatsOverlay({
 }: { stats: MatchStats; onClose: () => void; home: string; away: string }) {
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 p-6" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl bg-navy p-5 border border-white/15" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[88vh] w-full max-w-sm overflow-y-auto rounded-2xl border border-white/15 bg-navy p-5" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-1 text-center font-bold text-gold">Match Stats</h3>
         <StatsBlock stats={stats} home={home} away={away} />
         <button className="btn-dark mt-4 w-full text-xs" onClick={onClose}>Close</button>

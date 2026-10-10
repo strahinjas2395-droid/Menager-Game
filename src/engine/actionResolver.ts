@@ -4,7 +4,7 @@
  * pressure: 0-1 (higher = more pressure). angle: 0-1 (0 = straight on, 1 = tight angle).
  * All functions take a SeededRNG for reproducibility.
  */
-import type { Player } from "@/types";
+import { PlaystyleTag, type Player } from "@/types";
 import type { SeededRNG } from "@/database/rng";
 import { clamp } from "@/database/rng";
 
@@ -46,6 +46,10 @@ export interface PenaltyResult {
   saved: boolean;
 }
 
+function has(player: Player, tag: PlaystyleTag): boolean {
+  return (player.playstyles ?? []).includes(tag);
+}
+
 /**
  * base 70% + ShortPassing*2 + Technique*1 - distance*0.3
  * - pressure*15 - nearest opponent Interceptions*1
@@ -69,20 +73,27 @@ export function resolvePass(
         : technique === "long"
           ? passer.longPassing * 1.65 + passer.technique * 0.8
           : passer.shortPassing * 2 + passer.technique;
-  const receiverRead = (receiver.anticipation + receiver.offTheBall) * 0.14;
+  const receiverRead = (receiver.anticipation + receiver.offTheBall) * 0.14 +
+    (has(receiver, PlaystyleTag.SpaceInterpreter) ? 2.5 : 0);
+  const traitBonus =
+    technique === "through" && has(passer, PlaystyleTag.ThroughBallSpecialist) ? 7 :
+    technique === "cross" && has(passer, PlaystyleTag.Crosser) ? 6 :
+    technique === "long" && has(passer, PlaystyleTag.Playmaker) ? 6 :
+    technique === "short" && has(passer, PlaystyleTag.Playmaker) ? 3 : 0;
   const difficulty = technique === "through" ? 8 : technique === "cross" ? 5 : technique === "long" ? 3 : 0;
   const base =
-    70 + execution + receiverRead - difficulty - distance * (technique === "short" ? 0.3 : 0.2) -
+    70 + execution + receiverRead + traitBonus - difficulty - distance * (technique === "short" ? 0.3 : 0.2) -
     pressure * 15 - opponentInterceptions;
   const p = clamp(base, 5, 97);
   const success = rng.chance(p / 100);
-  const intercepted = !success && rng.chance(0.6);
+  const intercepted = !success && rng.chance(0.45);
   return { success, intercepted };
 }
 
 /**
- * Finishing*3 + Composure*2 - distance*2 - angle*3
- * - GK_Reflexes*2 - GK_ShotStopping*2 - pressure*10
+ * Contextual xG resolution. Close chances combine finishing/composure,
+ * distance, angle, pressure and keeper quality; long shots use a separately
+ * calibrated low-probability model driven by longShots and technique.
  */
 export function resolveShot(
   shooter: Player,
@@ -93,17 +104,20 @@ export function resolveShot(
   rng: SeededRNG,
 ): ShotResult {
   const isLongRange = distance > 20;
+  const specialist = isLongRange && has(shooter, PlaystyleTag.LongShotSpecialist) ? 5.5 :
+    !isLongRange && has(shooter, PlaystyleTag.ClinicalFinisher) ? 4 : 0;
   const score = isLongRange
     ? shooter.longShots * 2.8 + shooter.technique * 1.1 + shooter.composure * 1.2 +
-      shooter.finishing * 0.35 - distance * 1.25 - gk.reflexes * 1.25 -
+      shooter.finishing * 0.35 + specialist - distance * 1.25 - gk.reflexes * 1.25 -
       gk.shotStopping * 1.25 - pressure * 12 - angle * 8
-    : shooter.finishing * 3 + shooter.composure * 2 - distance * 2 - angle * 3 -
-      gk.reflexes * 2 - gk.shotStopping * 2 - pressure * 10;
+    : shooter.finishing * 0.9 + shooter.composure * 0.5 + specialist - distance * 0.6 - angle * 5 -
+      gk.reflexes * 0.3 - gk.shotStopping * 0.3 - pressure * 8;
 
-  // Long-range goals are rare but specialists have a meaningful advantage.
+  // Long-range goals are rare; close efforts use an xG-like quality scale so
+  // an average central attempt is not reduced to a two-percent lottery.
   const goalProb = isLongRange
     ? clamp(5 + score * 0.3, 1, 22)
-    : clamp(21 + score * 0.8, 2, 70);
+    : clamp(16 + score * 1.5, 2, 62);
   if (rng.chance(goalProb / 100)) {
     return { goal: true, saved: false, blocked: false, wide: false };
   }
@@ -111,7 +125,8 @@ export function resolveShot(
   // Split the misses: blocked if under pressure, wide if angle/distance poor
   const blockP = clamp(14 + pressure * 25 + (angle > 0.6 ? 6 : 0), 5, 45);
   const longAccuracy = isLongRange
-    ? (shooter.longShots - 10) * 1.1 + (shooter.technique - 10) * 0.55
+    ? (shooter.longShots - 10) * 1.1 + (shooter.technique - 10) * 0.55 +
+      (has(shooter, PlaystyleTag.LongShotSpecialist) ? 5 : 0)
     : 0;
   const wideP = clamp(
     10 + angle * 30 + (distance > 25 ? 14 : 0) - gk.communication * 0.3 - longAccuracy,
@@ -130,8 +145,13 @@ export function resolveDribble(
   defender: Player,
   rng: SeededRNG,
 ): DribbleResult {
-  const att = attacker.dribbling * 3 + attacker.agility * 2 + attacker.pace * 1;
-  const def = defender.tackling * 3 + defender.positioning * 2 + defender.pace * 1;
+  const att = attacker.dribbling * 3 + attacker.agility * 2 + attacker.pace * 1 +
+    (has(attacker, PlaystyleTag.Dribbler) ? 7 : 0) +
+    (has(attacker, PlaystyleTag.PressResistant) ? 4 : 0) +
+    (has(attacker, PlaystyleTag.PaceAbuser) ? 3 : 0);
+  const def = defender.tackling * 3 + defender.positioning * 2 + defender.pace * 1 +
+    (has(defender, PlaystyleTag.BallWinner) ? 5 : 0) +
+    (has(defender, PlaystyleTag.Interceptor) ? 2 : 0);
   const pBeat = clamp(50 + (att - def) * 1.2, 15, 88);
 
   if (rng.chance(pBeat / 100)) return { beat: true, foul: false, lost: false };
@@ -147,8 +167,11 @@ export function resolveTackle(
   attacker: Player,
   rng: SeededRNG,
 ): TackleResult {
-  const def = defender.tackling * 3 + defender.anticipation * 2;
-  const att = attacker.dribbling * 2 + attacker.agility * 1;
+  const def = defender.tackling * 3 + defender.anticipation * 2 +
+    (has(defender, PlaystyleTag.BallWinner) ? 6 : 0) +
+    (has(defender, PlaystyleTag.Interceptor) ? 3 : 0);
+  const att = attacker.dribbling * 2 + attacker.agility * 1 +
+    (has(attacker, PlaystyleTag.PressResistant) ? 4 : 0);
   const pWon = clamp(45 + (def - att) * 1.3, 15, 85);
 
   if (rng.chance(pWon / 100)) return { won: true, foul: false, card: "none" };
@@ -176,7 +199,9 @@ export function resolveHeader(
   const att =
     attacker.heading * 2 + attacker.jumping * 1.5 + attacker.offTheBall +
     (attacker.strength ?? 10) * 0.35 + (attacker.bravery ?? 10) * 0.25 +
-    clamp(((attacker.height ?? 180) - 175) / 4, -2, 5);
+    clamp(((attacker.height ?? 180) - 175) / 4, -2, 5) +
+    (has(attacker, PlaystyleTag.AerialThreat) ? 6 : 0) +
+    (has(attacker, PlaystyleTag.TargetMan) ? 3 : 0);
   const def =
     defender.aerialDuels * 2 + defender.positioning * 1.5 + defender.marking +
     (defender.strength ?? 10) * 0.4 + (defender.bravery ?? 10) * 0.25 +
@@ -210,7 +235,8 @@ export function resolvePenalty(
   rng: SeededRNG,
 ): PenaltyResult {
   const p = clamp(
-    78 + taker.penaltyTaking * 1 - gk.reflexes * 0.5 - gk.oneOnOnes * 0.5,
+    78 + taker.penaltyTaking * 1 + (has(taker, PlaystyleTag.SetPieceSpecialist) ? 5 : 0) -
+      gk.reflexes * 0.5 - gk.oneOnOnes * 0.5,
     40,
     96,
   );
@@ -228,7 +254,8 @@ export function resolveLooseBallDuel(
   rng: SeededRNG,
 ): "a" | "b" {
   const score = (p: Player) =>
-    p.pace * 0.4 + p.acceleration * 0.2 + p.anticipation * 0.3 + p.strength * 0.1;
+    p.pace * 0.4 + p.acceleration * 0.2 + p.anticipation * 0.3 + p.strength * 0.1 +
+    (has(p, PlaystyleTag.PaceAbuser) ? 1.8 : 0) + (has(p, PlaystyleTag.Interceptor) ? 1.2 : 0);
   const sa = score(a) + rng.float(0, 7);
   const sb = score(b) + rng.float(0, 7);
   return sa >= sb ? "a" : "b";
@@ -246,7 +273,8 @@ export function resolveAerialDuel(
 ): "a" | "b" {
   const aerial = (p: Player) =>
     p.jumping * 0.28 + p.heading * 0.18 + p.aerialDuels * 0.22 +
-    p.strength * 0.12 + p.bravery * 0.1 + clamp((p.height - 170) / 5, -2, 5);
+    p.strength * 0.12 + p.bravery * 0.1 + clamp((p.height - 170) / 5, -2, 5) +
+    (has(p, PlaystyleTag.AerialThreat) ? 1.8 : 0) + (has(p, PlaystyleTag.TargetMan) ? 1.2 : 0);
   return aerial(a) + rng.float(0, 5) >= aerial(b) + rng.float(0, 5) ? "a" : "b";
 }
 
@@ -255,7 +283,9 @@ export function resolveHoldOff(
   defender: Player,
   rng: SeededRNG,
 ): boolean {
-  const atk = attacker.strength * 0.5 + attacker.balance * 0.3 + attacker.ballControl * 0.2;
+  const atk = attacker.strength * 0.5 + attacker.balance * 0.3 + attacker.ballControl * 0.2 +
+    (has(attacker, PlaystyleTag.TargetMan) ? 2.2 : 0) +
+    (has(attacker, PlaystyleTag.PressResistant) ? 1.5 : 0);
   const def = defender.strength * 0.5 + defender.aggression * 0.25 + defender.tackling * 0.25;
   return rng.chance(clamp(0.5 + (atk - def) * 0.045, 0.18, 0.85));
 }

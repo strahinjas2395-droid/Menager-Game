@@ -11,14 +11,19 @@ import {
   resolveTackle,
 } from "@/engine/actionResolver";
 import { SeededRNG } from "@/database/rng";
-import type { Player } from "@/types";
+import { PlaystyleTag, type Player } from "@/types";
 
 /** Minimal stat carrier — actionResolver only reads named attributes. */
-const P = (over: Partial<Record<string, number>>): Player =>
+const P = (over: Partial<Player>): Player =>
   ({
     shortPassing: 10,
+    longPassing: 10,
+    crossing: 10,
+    creativity: 10,
+    decisions: 10,
     technique: 10,
     finishing: 10,
+    longShots: 10,
     composure: 10,
     reflexes: 10,
     shotStopping: 10,
@@ -36,7 +41,13 @@ const P = (over: Partial<Record<string, number>>): Player =>
     offTheBall: 10,
     aerialDuels: 10,
     marking: 10,
+    ballControl: 10,
+    strength: 10,
+    balance: 10,
+    bravery: 10,
+    height: 180,
     penaltyTaking: 10,
+    playstyles: [],
     ...over,
   }) as unknown as Player;
 
@@ -75,7 +86,10 @@ describe("actionResolver", () => {
       expect([r2.goal, r2.saved, r2.blocked, r2.wide].filter(Boolean)).toHaveLength(1);
       if (r2.goal) badGoals++;
     }
-    expect(goodGoals / N).toBeGreaterThan(0.6);
+    // Even elite one-on-ones are not penalties: a clear 10 m chance should be
+    // dangerous without becoming a 60–70% automatic goal.
+    expect(goodGoals / N).toBeGreaterThan(0.3);
+    expect(goodGoals / N).toBeLessThan(0.5);
     expect(badGoals / N).toBeLessThan(0.06);
   });
 
@@ -194,6 +208,49 @@ describe("actionResolver", () => {
     expect(wins / N).toBeGreaterThan(0.92);
   });
 
+
+  it("materially applies passing, dribbling and set-piece playstyles", () => {
+    const plainPassRng = new SeededRNG(1201);
+    const specialistPassRng = new SeededRNG(1201);
+    const plainDribbleRng = new SeededRNG(1202);
+    const specialistDribbleRng = new SeededRNG(1202);
+    const plainPenaltyRng = new SeededRNG(1203);
+    const specialistPenaltyRng = new SeededRNG(1203);
+    let plainPasses = 0;
+    let specialistPasses = 0;
+    let plainDribbles = 0;
+    let specialistDribbles = 0;
+    let plainPenalties = 0;
+    let specialistPenalties = 0;
+    const N = 3000;
+    for (let i = 0; i < N; i++) {
+      if (resolvePass(P({}), P({}), 24, 0.35, 12, plainPassRng, "through").success) plainPasses++;
+      if (resolvePass(
+        P({ playstyles: [PlaystyleTag.ThroughBallSpecialist] }),
+        P({ playstyles: [PlaystyleTag.SpaceInterpreter] }),
+        24,
+        0.35,
+        12,
+        specialistPassRng,
+        "through",
+      ).success) specialistPasses++;
+      if (resolveDribble(P({}), P({}), plainDribbleRng).beat) plainDribbles++;
+      if (resolveDribble(
+        P({ playstyles: [PlaystyleTag.Dribbler, PlaystyleTag.PressResistant] }),
+        P({}),
+        specialistDribbleRng,
+      ).beat) specialistDribbles++;
+      if (resolvePenalty(P({}), P({}), plainPenaltyRng).goal) plainPenalties++;
+      if (resolvePenalty(
+        P({ playstyles: [PlaystyleTag.SetPieceSpecialist] }),
+        P({}),
+        specialistPenaltyRng,
+      ).goal) specialistPenalties++;
+    }
+    expect(specialistPasses).toBeGreaterThan(plainPasses + 150);
+    expect(specialistDribbles).toBeGreaterThan(plainDribbles + 250);
+    expect(specialistPenalties).toBeGreaterThan(plainPenalties + 100);
+  });
 
   it("long-shot specialists score from range more often than poor shooters", () => {
     const goodRng = new SeededRNG(141);

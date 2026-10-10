@@ -38,6 +38,20 @@ export enum PlaystyleTag {
   FullBackRunner = "FullBackRunner",
   PressingForward = "PressingForward",
   CreativeInsideForward = "CreativeInsideForward",
+  /** Explodes into open grass with longer touches and tries to win foot races. */
+  PaceAbuser = "PaceAbuser",
+  /** Sees and executes passes into a runner's future path. */
+  ThroughBallSpecialist = "ThroughBallSpecialist",
+  /** Uses first touch, balance and composure to escape pressure. */
+  PressResistant = "PressResistant",
+  /** Times movement between and beyond defensive lines. */
+  SpaceInterpreter = "SpaceInterpreter",
+  /** Controls difficult or fast service without killing the attack. */
+  FirstTouchSpecialist = "FirstTouchSpecialist",
+  /** Reaches the byline and deliberately finds late runners. */
+  CutbackSpecialist = "CutbackSpecialist",
+  /** Reads passing lanes early and steps in before the receiver. */
+  Interceptor = "Interceptor",
   Leader = "Leader",
 }
 
@@ -139,6 +153,9 @@ export enum MatchEventType {
   ShotSaved = "ShotSaved",
   ShotWide = "ShotWide",
   Corner = "Corner",
+  ThrowIn = "ThrowIn",
+  GoalKick = "GoalKick",
+  FreeKick = "FreeKick",
   Foul = "Foul",
   YellowCard = "YellowCard",
   RedCard = "RedCard",
@@ -533,6 +550,13 @@ export interface MatchStats {
   tacklesHome: number;
   foulsHome: number;
   cornersHome: number;
+  carriesHome: number;
+  throwInsHome: number;
+  crossesHome: number;
+  throughBallsHome: number;
+  dribblesAttemptedHome: number;
+  dribblesCompletedHome: number;
+  knockOnsHome: number;
   possessionAway: number;
   shotsAway: number;
   shotsOnTargetAway: number;
@@ -541,6 +565,13 @@ export interface MatchStats {
   tacklesAway: number;
   foulsAway: number;
   cornersAway: number;
+  carriesAway: number;
+  throwInsAway: number;
+  crossesAway: number;
+  throughBallsAway: number;
+  dribblesAttemptedAway: number;
+  dribblesCompletedAway: number;
+  knockOnsAway: number;
 }
 
 export interface MatchResult {

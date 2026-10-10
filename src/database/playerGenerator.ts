@@ -338,6 +338,21 @@ function assignPlaystyles(
     add(PlaystyleTag.PressingForward, attrs.workRate + attrs.acceleration);
   if (attrs.flair >= 14 && attrs.dribbling >= 13 && (position === PrimaryPosition.LW || position === PrimaryPosition.RW || position === PrimaryPosition.CAM))
     add(PlaystyleTag.CreativeInsideForward, attrs.flair + attrs.dribbling);
+  if (attrs.pace >= 15 && attrs.acceleration >= 14)
+    add(PlaystyleTag.PaceAbuser, attrs.pace + attrs.acceleration + attrs.dribbling * 0.3);
+  if (attrs.creativity >= 14 && attrs.decisions >= 13 && Math.max(attrs.shortPassing, attrs.longPassing) >= 13)
+    add(PlaystyleTag.ThroughBallSpecialist, attrs.creativity + attrs.decisions + attrs.shortPassing * 0.4);
+  if (attrs.ballControl >= 14 && attrs.composure >= 13 && attrs.balance >= 12)
+    add(PlaystyleTag.PressResistant, attrs.ballControl + attrs.composure + attrs.balance * 0.5);
+  if (attrs.offTheBall >= 14 && attrs.anticipation >= 13)
+    add(PlaystyleTag.SpaceInterpreter, attrs.offTheBall + attrs.anticipation);
+  if (attrs.ballControl >= 15 && attrs.technique >= 14)
+    add(PlaystyleTag.FirstTouchSpecialist, attrs.ballControl + attrs.technique);
+  if (attrs.crossing >= 13 && attrs.decisions >= 12 && attrs.acceleration >= 12 &&
+      [PrimaryPosition.RB, PrimaryPosition.LB, PrimaryPosition.RW, PrimaryPosition.LW].includes(position))
+    add(PlaystyleTag.CutbackSpecialist, attrs.crossing + attrs.decisions + attrs.acceleration * 0.35);
+  if (attrs.interceptions >= 14 && attrs.anticipation >= 13)
+    add(PlaystyleTag.Interceptor, attrs.interceptions + attrs.anticipation);
   if (attrs.leadership >= 15) add(PlaystyleTag.Leader, attrs.leadership);
 
   candidates.sort((a, b) => b[1] - a[1]);

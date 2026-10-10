@@ -27,6 +27,14 @@ export const MATCH_PITCH_VIEW = Object.freeze({
   goalDepth: GOAL_DEPTH,
 });
 
+/** Logical radii: 10 pitch units are approximately one metre. */
+export const MATCH_MARKER_GEOMETRY = Object.freeze({
+  playerRadius: 6,
+  ballRadius: 3.5,
+  playerDiameterMetres: 1.2,
+  ballDiameterMetres: 0.7,
+});
+
 const renderX = (pitchX: number) => (pitchX + OUTER_MARGIN_X) * R;
 
 export class MatchScene {
@@ -52,15 +60,20 @@ export class MatchScene {
     this.awayDots = numbers.away.map((n, i) => this.makeDot(scene, colors.away, n, false, i));
 
     this.ballShadow = scene.add
-      .ellipse(renderX(PITCH_W / 2), (PITCH_H / 2) * R + 5, 25, 12, 0x000000, 0.34)
+      .ellipse(renderX(PITCH_W / 2), (PITCH_H / 2) * R + 4, 17, 8, 0x000000, 0.34)
       .setDepth(9);
     this.ball = scene.add
-      .circle(renderX(PITCH_W / 2), (PITCH_H / 2) * R, 11, 0xffffff)
+      .circle(
+        renderX(PITCH_W / 2),
+        (PITCH_H / 2) * R,
+        MATCH_MARKER_GEOMETRY.ballRadius * R,
+        0xffffff,
+      )
       .setDepth(11);
-    this.ball.setStrokeStyle(3, 0x222222, 0.9);
-    this.airBadge = scene.add.text(renderX(PITCH_W / 2), (PITCH_H / 2) * R - 28, "AIR", {
+    this.ball.setStrokeStyle(2, 0x222222, 0.9);
+    this.airBadge = scene.add.text(renderX(PITCH_W / 2), (PITCH_H / 2) * R - 22, "AIR", {
       fontFamily: "Arial, Helvetica, sans-serif",
-      fontSize: "18px",
+      fontSize: "14px",
       color: "#ffd166",
       fontStyle: "bold",
       stroke: "#111827",
@@ -77,30 +90,32 @@ export class MatchScene {
   ): import("phaser").GameObjects.Container {
     const g = scene.add.graphics();
     const hex = parseInt(color.replace("#", ""), 16);
-    const rad = 19;
+    // About 1.2 m in simulation scale: readable shirt numbers without making
+    // each player occupy a several-metre-wide chunk of the pitch.
+    const rad = MATCH_MARKER_GEOMETRY.playerRadius * R;
     if (filled) {
       // soft drop shadow
       g.fillStyle(0x000000, 0.35);
       g.fillCircle(3, 4, rad);
       g.fillStyle(hex, 1);
       g.fillCircle(0, 0, rad);
-      g.lineStyle(4, 0xffffff, 0.95);
+      g.lineStyle(2, 0xffffff, 0.95);
       g.strokeCircle(0, 0, rad);
     } else {
       g.fillStyle(0x101828, 0.9);
       g.fillCircle(0, 0, rad);
-      g.lineStyle(5, hex, 1);
+      g.lineStyle(3, hex, 1);
       g.strokeCircle(0, 0, rad);
-      g.lineStyle(2, 0xffffff, 0.5);
-      g.strokeCircle(0, 0, rad - 4);
+      g.lineStyle(1, 0xffffff, 0.5);
+      g.strokeCircle(0, 0, rad - 3);
     }
     const label = scene.add.text(0, filled ? -1 : 0, String(number), {
       fontFamily: "Arial, Helvetica, sans-serif",
-      fontSize: "20px",
+      fontSize: "13px",
       color: "#ffffff",
       fontStyle: "bold",
       stroke: filled ? "#000000" : color,
-      strokeThickness: filled ? 3 : 4,
+      strokeThickness: 2,
     });
     label.setOrigin(0.5);
     const c = scene.add.container(renderX(PITCH_W / 2), (PITCH_H / 2) * R, [g, label]);
@@ -299,7 +314,7 @@ export class MatchScene {
         duration: 90,
         ease: "Linear",
       });
-      this.ball.setStrokeStyle(3, ballPos.airborne ? 0xf0a500 : 0x222222, 0.95);
+      this.ball.setStrokeStyle(2, ballPos.airborne ? 0xf0a500 : 0x222222, 0.95);
       if (this.ballShadow) {
         scene.tweens.killTweensOf(this.ballShadow);
         scene.tweens.add({
@@ -314,7 +329,7 @@ export class MatchScene {
       }
       if (this.airBadge) {
         this.airBadge.setVisible(Boolean(ballPos.airborne));
-        this.airBadge.setPosition(renderX(ballPos.x), ballPos.y * R - lift - 28);
+        this.airBadge.setPosition(renderX(ballPos.x), ballPos.y * R - lift - 21);
       }
     }
   }

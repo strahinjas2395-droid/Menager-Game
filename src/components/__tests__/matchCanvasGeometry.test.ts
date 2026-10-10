@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MATCH_PITCH_VIEW } from "@/components/MatchCanvas";
+import { MATCH_MARKER_GEOMETRY, MATCH_PITCH_VIEW } from "@/components/MatchCanvas";
 
 describe("live match pitch geometry", () => {
   it("places both goal backs outside their respective goal lines", () => {
@@ -14,5 +14,11 @@ describe("live match pitch geometry", () => {
   it("keeps both exterior nets inside the visible canvas", () => {
     expect(MATCH_PITCH_VIEW.leftGoalBack).toBeGreaterThanOrEqual(0);
     expect(MATCH_PITCH_VIEW.rightGoalBack).toBeLessThanOrEqual(MATCH_PITCH_VIEW.viewWidth);
+  });
+
+  it("keeps markers small relative to the full-size pitch", () => {
+    expect(MATCH_MARKER_GEOMETRY.playerDiameterMetres).toBeLessThanOrEqual(1.2);
+    expect(MATCH_MARKER_GEOMETRY.playerRadius * 2).toBeLessThan(15);
+    expect(MATCH_MARKER_GEOMETRY.ballRadius).toBeLessThan(MATCH_MARKER_GEOMETRY.playerRadius);
   });
 });
