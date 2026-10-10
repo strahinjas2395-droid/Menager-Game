@@ -37,6 +37,7 @@ import { interpretTacticalInstructions, type TacticalInstructionRequest } from "
 import { expectedGoals } from "@/engine/leagueEngine";
 import { penaltyShootout } from "@/engine/cupEngine";
 import { SeededRNG } from "@/database/rng";
+import { MatchAudioController } from "@/services/matchAudio";
 import {
   applyTacticalAdvice,
   generateTacticalAdvice,
@@ -109,6 +110,13 @@ function MatchScreen() {
 
   const sceneRef = useRef<MatchScene | null>(null);
   const workerRef = useRef<Worker | null>(null);
+  const matchAudioRef = useRef<MatchAudioController | null>(null);
+  const audioEventCountRef = useRef(0);
+  const audioPhaseRef = useRef<MatchSnapshot["phase"] | null>(null);
+  const latestSnapshotRef = useRef<MatchSnapshot | null>(null);
+  const canvasReadyRef = useRef(false);
+  const workerReadyRef = useRef(false);
+  const matchStartedRef = useRef(false);
   const [snapshot, setSnapshot] = useState<MatchSnapshot | null>(null);
   const [halfTime, setHalfTime] = useState(false);
   const [fullTime, setFullTime] = useState(false);
@@ -196,6 +204,52 @@ function MatchScreen() {
     ));
   }, [ctx]);
 
+  const startMatchWhenReady = useCallback(() => {
+    const worker = workerRef.current;
+    const initial = latestSnapshotRef.current;
+    if (!worker || !initial || !workerReadyRef.current || !canvasReadyRef.current || matchStartedRef.current) return;
+    matchStartedRef.current = true;
+    audioEventCountRef.current = initial.events.length;
+    audioPhaseRef.current = initial.phase;
+    if (initial.phase === "kickoff") matchAudioRef.current?.playCue("whistle");
+    worker.postMessage({ type: "start" });
+  }, []);
+
+  const handlePitchReady = useCallback((scene: MatchScene) => {
+    const initial = latestSnapshotRef.current;
+    if (initial) scene.updatePositions(initial.homePositions, initial.awayPositions, initial.ball);
+    canvasReadyRef.current = true;
+    startMatchWhenReady();
+  }, [startMatchWhenReady]);
+
+  // Procedural stadium audio starts without downloading assets. Desktop and
+  // Android WebView usually allow it immediately; browser autoplay policies
+  // are satisfied on the next pointer/key gesture when they do not.
+  useEffect(() => {
+    if (!ctx) return;
+    const audio = new MatchAudioController(save?.settings);
+    matchAudioRef.current = audio;
+    audioEventCountRef.current = 0;
+    audioPhaseRef.current = null;
+    void audio.start();
+
+    const unlock = () => { void audio.unlock(); };
+    document.addEventListener("pointerdown", unlock, { passive: true });
+    document.addEventListener("keydown", unlock);
+    return () => {
+      document.removeEventListener("pointerdown", unlock);
+      document.removeEventListener("keydown", unlock);
+      if (matchAudioRef.current === audio) matchAudioRef.current = null;
+      void audio.stop();
+    };
+    // A fixture owns one audio graph for its entire lifecycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx?.fixture.id]);
+
+  useEffect(() => {
+    matchAudioRef.current?.updateSettings(save?.settings);
+  }, [save?.settings?.audioEnabled, save?.settings?.soundVolume, save?.settings?.musicVolume]);
+
   // --- boot worker
   useEffect(() => {
     if (!ctx) return;
@@ -214,11 +268,39 @@ function MatchScreen() {
       if (cancelled) return;
       const msg = ev.data;
       switch (msg.type) {
+        case "ready":
+          workerReadyRef.current = true;
+          startMatchWhenReady();
+          break;
         case "state": {
           const st = msg.state;
+          latestSnapshotRef.current = st;
+          if (matchStartedRef.current) {
+            const audio = matchAudioRef.current;
+            const previousPhase = audioPhaseRef.current;
+            if (st.phase === "kickoff" && previousPhase !== "kickoff") {
+              audio?.playCue("whistle");
+            }
+            if (previousPhase === "kickoff" && st.phase !== "kickoff") {
+              // This follows the simulation phase transition, so the audible
+              // boot happens exactly when the ball physically leaves the spot.
+              audio?.playCue("kick");
+            } else if (previousPhase && previousPhase !== "flight" && st.phase === "flight") {
+              // Passes, shots, crosses and physical restarts all launch the same
+              // independent ball-flight phase, giving visible contacts a sound.
+              audio?.playCue("kick");
+            }
+            audioPhaseRef.current = st.phase;
+
+            if (st.events.length < audioEventCountRef.current) audioEventCountRef.current = 0;
+            st.events.slice(audioEventCountRef.current).forEach((event) => audio?.playEvent(event));
+            audioEventCountRef.current = st.events.length;
+          }
+
           setSnapshot(st);
           setEvents(st.events);
           sceneRef.current?.updatePositions(st.homePositions, st.awayPositions, st.ball);
+          startMatchWhenReady();
           break;
         }
         case "event": {
@@ -268,6 +350,7 @@ function MatchScreen() {
           break;
       }
     };
+    workerRef.current = worker;
     worker.postMessage({
       type: "init",
       payload: {
@@ -276,7 +359,6 @@ function MatchScreen() {
         options: { seed: ctx.seed, fixtureId: ctx.fixture.id, difficulty: save?.difficulty },
       },
     });
-    workerRef.current = worker;
 
     return () => {
       cancelled = true;
@@ -288,7 +370,12 @@ function MatchScreen() {
         void screen.orientation?.unlock?.();
       } catch { /* noop */ }
       worker.terminate();
-      workerRef.current = null;
+      if (workerRef.current === worker) workerRef.current = null;
+      workerReadyRef.current = false;
+      matchStartedRef.current = false;
+      latestSnapshotRef.current = null;
+      audioPhaseRef.current = null;
+      audioEventCountRef.current = 0;
     };
   }, [ctx]);
 
@@ -561,6 +648,7 @@ function MatchScreen() {
             awayColor={awayClub.primaryColor}
             homeNumbers={ctx.home.displayNumbers}
             awayNumbers={ctx.away.displayNumbers}
+            onReady={handlePitchReady}
           />
           {goalCelebration && (
             <GoalCelebrationOverlay key={goalCelebration.id} goal={goalCelebration} />

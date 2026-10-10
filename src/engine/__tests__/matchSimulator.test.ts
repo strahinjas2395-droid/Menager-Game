@@ -187,6 +187,42 @@ describe("selectBestXI", () => {
 });
 
 describe("MatchSimulator", () => {
+  it("sets up and physically takes the opening kickoff from the centre spot", () => {
+    const { sim } = setup(4239);
+    const initial = sim.getState();
+
+    expect(initial.phase).toBe("kickoff");
+    expect(initial.ball).toMatchObject({ x: 500, y: 325, mode: "dead" });
+    expect(initial.possession).toBe("home");
+
+    const homeAtCentre = initial.homePositions.filter(
+      (player) => Math.hypot(player.x - 500, player.y - 325) < 0.01,
+    );
+    expect(homeAtCentre).toHaveLength(1);
+    for (const player of initial.homePositions) {
+      if (Math.hypot(player.x - 500, player.y - 325) < 0.01) continue;
+      expect(player.x).toBeLessThan(500);
+    }
+    for (const player of initial.awayPositions) {
+      expect(player.x).toBeGreaterThan(500);
+      expect(Math.hypot(player.x - 500, player.y - 325)).toBeGreaterThanOrEqual(91.5);
+    }
+
+    let guard = 0;
+    while (sim.getState().phase === "kickoff" && guard++ < 100) {
+      const before = sim.getState();
+      expect(before.ball.x).toBe(500);
+      expect(before.ball.y).toBe(325);
+      sim.tick(0.1);
+    }
+
+    expect(guard).toBeLessThan(100);
+    expect(sim.getState().phase).toBe("flight");
+    expect(sim.getStats().passesAttemptedHome).toBe(1);
+    sim.tick(0.1);
+    expect(sim.getState().ball.x).toBeLessThan(500);
+  });
+
   it("reaches half time after eight minutes of unaccelerated real time", () => {
     const { sim } = setup(4241);
     for (let tick = 0; tick < 4799; tick++) sim.tick(0.1);
@@ -205,6 +241,13 @@ describe("MatchSimulator", () => {
     expect(sim.hasNewState()).toBe(true);
 
     sim.resume();
+    const secondHalfRestart = sim.getState();
+    expect(secondHalfRestart.phase).toBe("kickoff");
+    expect(secondHalfRestart.ball).toMatchObject({ x: 500, y: 325, mode: "dead" });
+    expect(secondHalfRestart.possession).toBe("away");
+    expect(secondHalfRestart.awayPositions.filter(
+      (player) => Math.hypot(player.x - 500, player.y - 325) < 0.01,
+    )).toHaveLength(1);
     sim.skipToStop();
 
     const state = sim.getState();

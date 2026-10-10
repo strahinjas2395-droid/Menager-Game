@@ -83,11 +83,31 @@ export function defaultTactics(formation = "4-3-3"): TacticalSetup {
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
+  audioEnabled: true,
   soundVolume: 0.7,
   musicVolume: 0.4,
   vibration: true,
   autoPressConference: false,
 };
+
+/** Fill settings introduced after the original save schema without invalidating careers. */
+export function normalizeGameSettings(settings?: Partial<GameSettings> | null): GameSettings {
+  const soundVolume = typeof settings?.soundVolume === "number" && Number.isFinite(settings.soundVolume)
+    ? clamp(settings.soundVolume, 0, 1)
+    : DEFAULT_SETTINGS.soundVolume;
+  const musicVolume = typeof settings?.musicVolume === "number" && Number.isFinite(settings.musicVolume)
+    ? clamp(settings.musicVolume, 0, 1)
+    : DEFAULT_SETTINGS.musicVolume;
+  return {
+    ...DEFAULT_SETTINGS,
+    ...settings,
+    audioEnabled: settings?.audioEnabled !== false,
+    soundVolume,
+    musicVolume,
+    vibration: settings?.vibration !== false,
+    autoPressConference: settings?.autoPressConference === true,
+  };
+}
 
 /** Map an AI manager's identity to a full TacticalSetup. */
 export function tacticsFromManager(manager: Manager): TacticalSetup {
@@ -401,6 +421,7 @@ export const useGameStore = create<GameState>((set, get) => {
         existing.managerMemories ??= {};
         existing.trainingPlan ??= defaultTrainingPlan();
         existing.trainingHistory ??= [];
+        existing.settings = normalizeGameSettings(existing.settings);
         normalizeWorldFitness(existing.world);
         set({ save: existing, saveExists: true, weekQueue: [] });
       }
@@ -674,6 +695,7 @@ export const useGameStore = create<GameState>((set, get) => {
       save.gameMode ??= GameMode.Iconic;
       save.trainingPlan ??= defaultTrainingPlan();
       save.trainingHistory ??= [];
+      save.settings = normalizeGameSettings(save.settings);
       normalizeWorldFitness(save.world);
       set({ save: { ...save }, weekQueue: [], saveExists: true });
       await saveGame(save);

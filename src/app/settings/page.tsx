@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { Download, Trash2, Upload } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
-import { useGameStore } from "@/store/gameStore";
+import { normalizeGameSettings, useGameStore } from "@/store/gameStore";
 import StepDots from "@/components/StepDots";
 import { downloadSave, importDatabase } from "@/database/storage";
 import { difficultyLabel } from "@/utils/difficulty";
@@ -17,16 +17,14 @@ export default function SettingsPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const settings: GameSettings = save?.settings ?? {
-    soundVolume: 0.7,
-    musicVolume: 0.4,
-    vibration: true,
-    autoPressConference: false,
-  };
+  const settings: GameSettings = normalizeGameSettings(save?.settings);
 
   const update = async (patch: Partial<GameSettings>) => {
     if (!save) return;
-    await replaceSave({ ...save, settings: { ...save.settings, ...patch } });
+    await replaceSave({
+      ...save,
+      settings: normalizeGameSettings({ ...settings, ...patch }),
+    });
   };
 
   const toggleFullscreen = () => {
@@ -71,10 +69,17 @@ export default function SettingsPage() {
             <span>Match pace</span>
             <span className="font-bold text-gold">Fixed · 8 min per half</span>
           </div>
-          <VolumeRow label="Sound volume" value={settings.soundVolume}
-            onChange={(v) => void update({ soundVolume: v })} />
-          <VolumeRow label="Music volume" value={settings.musicVolume}
-            onChange={(v) => void update({ musicVolume: v })} />
+          <ToggleRow label="Game audio" value={settings.audioEnabled}
+            onChange={(v) => void update({ audioEnabled: v })} />
+          <div className={`space-y-3 rounded-lg border border-white/5 bg-navy/55 p-3 transition ${settings.audioEnabled ? "" : "opacity-45"}`}>
+            <VolumeRow label="Sound effects" value={settings.soundVolume}
+              onChange={(v) => void update({ soundVolume: v })} />
+            <VolumeRow label="Stadium ambience" value={settings.musicVolume}
+              onChange={(v) => void update({ musicVolume: v })} />
+          </div>
+          <p className="text-[10px] leading-relaxed text-white/35">
+            Whistles, kicks, crowd reactions and match atmosphere are generated on your device. Turn Game audio off to mute everything while keeping your volume choices.
+          </p>
           <ToggleRow label="Vibration on goal" value={settings.vibration}
             onChange={(v) => void update({ vibration: v })} />
           <ToggleRow label="Auto press conferences" value={settings.autoPressConference}
@@ -187,6 +192,10 @@ function ToggleRow({ label, value, onChange }: { label: string; value: boolean; 
     <div className="flex items-center justify-between text-xs">
       <span>{label}</span>
       <button
+        type="button"
+        role="switch"
+        aria-label={label}
+        aria-checked={value}
         onClick={() => onChange(!value)}
         className={`h-5 w-9 rounded-full p-0.5 transition ${value ? "bg-gold" : "bg-white/20"}`}
       >

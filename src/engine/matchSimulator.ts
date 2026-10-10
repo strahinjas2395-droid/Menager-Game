@@ -303,6 +303,8 @@ interface Flight {
   dur: number;
   side: Side;
   targetIdx?: number;
+  /** A legal centre-spot restart: the selected receiver controls it reliably. */
+  kickoff?: boolean;
   shotOutcome?: { goal: boolean; saved: boolean; blocked: boolean; wide: boolean };
   shotTechnique?: ShotTechnique;
   passOutcome?: { success: boolean; intercepted: boolean };
@@ -510,6 +512,13 @@ function emptyStats(): MatchStats {
 
 type KickoffReason = "start" | "half" | "restart";
 
+interface KickoffState {
+  side: Side;
+  reason: KickoffReason;
+  takerIdx: number;
+  receiverIdx: number;
+}
+
 interface GoalCelebration {
   side: Side;
   scorerIndex: number;
@@ -548,6 +557,8 @@ export class MatchSimulator {
   private flight: Flight | null = null;
   private setPiece: SetPiece | null = null;
   private celebration: GoalCelebration | null = null;
+  /** Explicit centre-spot taker/receiver while both teams hold legal kickoff positions. */
+  private kickoffState: KickoffState | null = null;
   private phaseTimer = 0;
   private decisionCd = 0;
   private looseLockSide: Side | null = null;
@@ -1467,7 +1478,7 @@ export class MatchSimulator {
         ? this.carrier.side
         : this.flight
           ? this.flight.side
-          : this.phase === "open" || this.phase === "setpiece"
+          : this.phase === "open" || this.phase === "setpiece" || this.phase === "kickoff"
             ? this.possessionSide
             : "loose",
       homeLineup: this.lineup(this.homePlayers),
@@ -1605,29 +1616,104 @@ export class MatchSimulator {
     this.penaltyState = null;
     this.ball = { x: PITCH_W / 2, y: PITCH_H / 2 };
     this.ballHeight = 0;
+    this.controlledBallVelocity = { x: 0, y: 0 };
+    this.controlledBallTarget = { x: PITCH_W / 2, y: PITCH_H / 2 };
+    this.looseBallVelocity = { x: 0, y: 0 };
     this.resetShapes();
 
     const players = this.players(side);
-    let best = 0;
-    let bestDist = Infinity;
-    players.forEach((sp, i) => {
-      if (sp.sentOff) return;
-      const d = Math.abs(sp.x - PITCH_W / 2) + Math.abs(sp.y - PITCH_H / 2);
-      if (d < bestDist) { bestDist = d; best = i; }
+    const active = players
+      .map((player, index) => ({ player, index }))
+      .filter(({ player }) => !player.sentOff);
+    const outfield = active.filter(({ player }) => player.role !== "GK");
+    const candidates = outfield.length > 0 ? outfield : active;
+    const linePriority = (player: SimPlayer): number =>
+      lineOf(player.role) === "FWD" ? 0 : lineOf(player.role) === "MID" ? 1 : lineOf(player.role) === "DEF" ? 2 : 3;
+    candidates.sort((a, b) => {
+      const priority = linePriority(a.player) - linePriority(b.player);
+      if (priority !== 0) return priority;
+      const aDistance = Math.hypot(a.player.x - PITCH_W / 2, a.player.y - PITCH_H / 2);
+      const bDistance = Math.hypot(b.player.x - PITCH_W / 2, b.player.y - PITCH_H / 2);
+      return aDistance - bDistance;
     });
-    this.carrier = { side, i: best };
-    this.carrierSince = this.worldTime;
-    const kp = players[best];
-    if (kp) {
-      this.ball.x = kp.x;
-      this.ball.y = kp.y;
+    const takerIdx = candidates[0]?.index ?? 0;
+    const dir = this.attackDir(side);
+    const receiverTarget = { x: PITCH_W / 2 - dir * 48, y: PITCH_H / 2 };
+    const receiverCandidates = active.filter(({ index }) => index !== takerIdx);
+    receiverCandidates.sort((a, b) => {
+      const rolePriority = (player: SimPlayer) =>
+        lineOf(player.role) === "MID" ? 0 : lineOf(player.role) === "FWD" ? 1 : lineOf(player.role) === "DEF" ? 2 : 3;
+      const priority = rolePriority(a.player) - rolePriority(b.player);
+      if (priority !== 0) return priority;
+      return Math.hypot(a.player.x - receiverTarget.x, a.player.y - receiverTarget.y) -
+        Math.hypot(b.player.x - receiverTarget.x, b.player.y - receiverTarget.y);
+    });
+    const receiverIdx = receiverCandidates[0]?.index ?? takerIdx;
+
+    // The first worker snapshot must already show a lawful restart. Previously
+    // it exposed the ordinary formation before the first tick and attached the
+    // ball to whichever player happened to be nearest, often well beyond the
+    // halfway line. Every non-taker now starts in their own half, and the
+    // opposition is outside the centre circle before the whistle.
+    for (const playerSide of ["home", "away"] as Side[]) {
+      const playerDir = this.attackDir(playerSide);
+      const team = this.team(playerSide);
+      this.players(playerSide).forEach((sp, index) => {
+        const base = team.basePositions[index] ?? { x: 500 - playerDir * 120, y: 325 };
+        let x = playerSide === "home" ? Math.min(base.x, 480) : Math.max(base.x, 520);
+        const y = clamp(base.y, 28, PITCH_H - 28);
+
+        if (playerSide !== side) {
+          const dy = y - PITCH_H / 2;
+          const centreCircleClearance = 98;
+          if (Math.hypot(x - PITCH_W / 2, dy) < centreCircleClearance) {
+            const requiredX = Math.sqrt(Math.max(0, centreCircleClearance ** 2 - dy ** 2));
+            x = PITCH_W / 2 - playerDir * requiredX;
+          }
+        }
+
+        if (playerSide === side && index === receiverIdx && receiverIdx !== takerIdx) {
+          x = receiverTarget.x;
+          sp.y = clamp(PITCH_H / 2 + (base.y < PITCH_H / 2 ? -28 : 28), 28, PITCH_H - 28);
+        } else {
+          sp.y = y;
+        }
+        sp.x = x;
+        sp.tx = sp.x;
+        sp.ty = sp.y;
+        sp.vx = 0;
+        sp.vy = 0;
+        sp.brainTx = sp.x;
+        sp.brainTy = sp.y;
+        sp.brainNextAt = this.worldTime;
+        sp.intent = playerSide === side && index === receiverIdx ? "receive" : "hold";
+        sp.dribblePlan = null;
+        sp.nextTouchAt = this.worldTime;
+      });
     }
 
-    if (reason === "start") {
-      this.pushEvent(MatchEventType.KickOff, undefined, undefined, "Kick off!");
-    } else if (reason === "half") {
-      this.pushEvent(MatchEventType.KickOff, undefined, undefined, "Second half under way");
+    const taker = players[takerIdx];
+    if (taker) {
+      taker.x = PITCH_W / 2;
+      taker.y = PITCH_H / 2;
+      taker.tx = taker.x;
+      taker.ty = taker.y;
+      taker.vx = 0;
+      taker.vy = 0;
+      taker.brainTx = taker.x;
+      taker.brainTy = taker.y;
+      taker.intent = "hold";
     }
+    this.kickoffState = { side, reason, takerIdx, receiverIdx };
+
+    if (reason === "start") {
+      this.pushEvent(MatchEventType.KickOff, this.team(side).clubId, taker?.p.id, "Kick off!");
+    } else if (reason === "half") {
+      this.pushEvent(MatchEventType.KickOff, this.team(side).clubId, taker?.p.id, "Second half ready at the centre spot");
+    } else {
+      this.pushEvent(MatchEventType.KickOff, this.team(side).clubId, taker?.p.id, `${this.team(side).shortName} restart from the centre`);
+    }
+    this.pendingState = true;
   }
 
   private resetShapes(): void {
@@ -1650,12 +1736,45 @@ export class MatchSimulator {
     }
   }
 
-  private tickKickoff(dt: number): void {
-    this.tickMovement(dt, true);
-    if (this.phaseTimer <= 0 && this.carrier) {
+  private tickKickoff(_dt: number): void {
+    if (this.phaseTimer > 0) return;
+    const kickoff = this.kickoffState;
+    if (!kickoff) {
       this.phase = "open";
-      this.decisionCd = this.rng.float(0.4, 0.9);
+      return;
     }
+    const taker = this.players(kickoff.side)[kickoff.takerIdx];
+    const receiver = this.players(kickoff.side)[kickoff.receiverIdx];
+    this.kickoffState = null;
+    if (!taker || !receiver || taker === receiver || taker.sentOff || receiver.sentOff) {
+      if (taker && !taker.sentOff) this.giveBallTo(kickoff.side, kickoff.takerIdx);
+      else this.makeLoose(PITCH_W / 2, PITCH_H / 2, this.other(kickoff.side));
+      return;
+    }
+
+    const distanceM = Math.hypot(receiver.x - PITCH_W / 2, receiver.y - PITCH_H / 2) / UNITS_PER_METER;
+    this.statsPassAttempt(kickoff.side, taker.p.id);
+    this.addPlayerStat(taker.p.id, "touches");
+    this.launchFlight({
+      kind: "pass",
+      fromX: PITCH_W / 2,
+      fromY: PITCH_H / 2,
+      toX: receiver.x,
+      toY: receiver.y,
+      t: 0,
+      dur: clamp(distanceM / 12, 0.32, 0.58),
+      side: kickoff.side,
+      targetIdx: kickoff.receiverIdx,
+      kickoff: true,
+      passOutcome: { success: true, intercepted: false },
+      arcH: 0,
+      flavor: "std",
+      passerId: taker.p.id,
+      challengedIds: [],
+      countsAsPass: true,
+    });
+    this.lastTouchSide = kickoff.side;
+    this.possessionSide = kickoff.side;
   }
 
   private tickCelebration(dt: number): void {
@@ -4006,9 +4125,11 @@ export class MatchSimulator {
       endX: f.toX,
       endY: f.toY,
       pressure,
-      qualifier: f.penalty
-        ? "penalty"
-        : f.shotTechnique
+      qualifier: f.kickoff
+        ? "kickoff"
+        : f.penalty
+          ? "penalty"
+          : f.shotTechnique
           ? `shot:${f.shotTechnique}`
           : f.movementPattern
             ? `movement:${f.movementPattern}`
@@ -4196,6 +4317,16 @@ export class MatchSimulator {
     const defender = defenderIdx >= 0 ? this.players(defending)[defenderIdx] : undefined;
     const rd = receiver ? Math.hypot(receiver.x - f.toX, receiver.y - f.toY) : Infinity;
     const dd = defender ? Math.hypot(defender.x - f.toX, defender.y - f.toY) : Infinity;
+
+    // A centre-spot restart is a deliberate, uncontested touch between two
+    // legally positioned team-mates. Do not let the generic first-touch dice
+    // manufacture a random turnover before open play has even begun.
+    if (f.kickoff && receiver) {
+      if (f.countsAsPass !== false) this.statsPassComplete(side, f.passerId);
+      this.addPlayerStat(receiver.p.id, "touches");
+      this.giveBallTo(side, receiverIdx);
+      return;
+    }
 
     if (outcome.success && receiver) {
       // A dropping diagonal/long pass creates an aerial duel. A hard ground

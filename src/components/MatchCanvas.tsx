@@ -366,6 +366,8 @@ interface MatchCanvasProps {
   awayColor: string;
   homeNumbers: number[];
   awayNumbers: number[];
+  /** Signals that the first legal match snapshot can be painted before time starts. */
+  onReady?: (scene: MatchScene) => void;
 }
 
 export default function MatchCanvas({
@@ -374,6 +376,7 @@ export default function MatchCanvas({
   awayColor,
   homeNumbers,
   awayNumbers,
+  onReady,
 }: MatchCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const inited = useRef(false);
@@ -401,6 +404,7 @@ export default function MatchCanvas({
             { home: homeColor, away: awayColor },
             { home: homeNumbers, away: awayNumbers },
           );
+          onReady?.(ms);
         }
       }
 

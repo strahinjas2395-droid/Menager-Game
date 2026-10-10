@@ -67,6 +67,10 @@ self.onmessage = (ev: MessageEvent<InMsg>) => {
       }
       const { home, away, options } = msg.payload;
       sim = new MatchSimulator(home, away, options);
+      // Do not consume the centre-spot restart while Phaser is still loading.
+      // The page sends `start` only after both the worker snapshot and pitch
+      // renderer are ready, guaranteeing the kickoff is actually visible.
+      sim.pause();
       sim.onEvent = (e: MatchEvent) => post({ type: "event", event: e });
       sim.onHalfTime = () => {
         post({ type: "halfTime" });

@@ -1159,7 +1159,11 @@ export interface GameSave {
 export interface GameSettings {
   /** Legacy setting retained only so older imported saves remain readable; match pace is now fixed. */
   defaultMatchSpeed?: 1 | 2 | 4 | 8;
+  /** Master switch for all generated game and stadium audio. */
+  audioEnabled: boolean;
+  /** Match effects such as whistles, kicks, saves and goal reactions. */
   soundVolume: number;
+  /** Legacy field name; now controls the continuous stadium ambience bed. */
   musicVolume: number;
   vibration: boolean;
   autoPressConference: boolean;

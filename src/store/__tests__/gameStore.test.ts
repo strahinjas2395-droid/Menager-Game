@@ -3,7 +3,7 @@ import { getMatchContext, useGameStore } from "@/store/gameStore";
 import { buildInstructionRoster, instructionContextFingerprint } from "@/engine/directives";
 import { defaultOpponentPlayerPlan } from "@/engine/matchPlan";
 import { LEAGUES_DATA, slugify } from "@/database/leagueGenerator";
-import { Difficulty, GameMode, type MatchResult, type MatchStats, type PlayerMatchAnalysis } from "@/types";
+import { Difficulty, GameMode, type GameSettings, type MatchResult, type MatchStats, type PlayerMatchAnalysis } from "@/types";
 
 function emptyStats(): MatchStats {
   return {
@@ -531,7 +531,15 @@ describe("core game loop (integration)", () => {
 
     const legacySave = structuredClone(iconicSave);
     delete legacySave.gameMode;
+    delete (legacySave.settings as Partial<GameSettings>).audioEnabled;
     await useGameStore.getState().replaceSave(legacySave);
     expect(useGameStore.getState().save!.gameMode).toBe(GameMode.Iconic);
+    expect(useGameStore.getState().save!.settings.audioEnabled).toBe(true);
+
+    await useGameStore.getState().replaceSave({
+      ...useGameStore.getState().save!,
+      settings: { ...useGameStore.getState().save!.settings, audioEnabled: false },
+    });
+    expect(useGameStore.getState().save!.settings.audioEnabled).toBe(false);
   }, 60_000);
 });
