@@ -29,6 +29,10 @@ import {
   type PlayerMatchAnalysis,
   type PlayerRoleAssignment,
   type TacticalChangeRecord,
+  type TacticalEvent,
+  type TacticalEventOutcome,
+  type TacticalEventType,
+  type TacticalMatchPhase,
   type TacticalSetup,
 } from "@/types";
 import { SeededRNG, clamp } from "@/database/rng";
@@ -47,6 +51,7 @@ import { getFormation, mirrorFormation } from "@/engine/formations";
 import { mergeDirectives, type PlayerDirectives } from "@/engine/directives";
 import { buildAIOpponentMatchPlan, sanitizeOpponentMatchPlan } from "@/engine/matchPlan";
 import { MATCH_TIME_SCALE } from "@/engine/matchClock";
+import { buildTacticalAnalytics, expectedGoalsAt } from "@/engine/tacticalAnalytics";
 import {
   directivesForPlayerRole,
   playerRoleLabel,
@@ -245,6 +250,8 @@ interface Flight {
   beatDefenderId?: string;
   countsAsPass?: boolean;
   penalty?: boolean;
+  analyticsType?: TacticalEventType;
+  analyticsEventId?: string;
 }
 
 /** Ball-speed profiles per pass flavour (metres per second). */
@@ -464,10 +471,16 @@ export class MatchSimulator {
   private telemetry = new Map<string, PlayerTelemetryRuntime>();
   private nextHeatmapSampleAt = 0;
   private tacticalChanges: TacticalChangeRecord[] = [];
+  private tacticalEvents: TacticalEvent[] = [];
+  private tacticalEventCounter = 0;
+  private possessionId = 1;
+  private sequenceIndex = 0;
+  private pendingFlightEventId: string | null = null;
   private opponentPlans: Partial<Record<Side, OpponentMatchPlan>> = {};
   private opponentPlanChanges: OpponentPlanChangeRecord[] = [];
   private readonly fixtureId: string;
   private readonly initialFormations: Record<Side, string>;
+  private readonly initialPlayStyles: Record<Side, PlayStyle>;
   /** Match-clock timestamp for throttled, inspectable instruction commentary. */
   private instructionCommentaryAt = new Map<string, number>();
   /** Avoid allocating a merged team/player object on every movement check. */
@@ -497,6 +510,10 @@ export class MatchSimulator {
     this.initialFormations = {
       home: home.tactics.formation,
       away: away.tactics.formation,
+    };
+    this.initialPlayStyles = {
+      home: home.tactics.playStyle,
+      away: away.tactics.playStyle,
     };
 
     this.homePlayers = this.buildPlayers(home);
@@ -695,8 +712,13 @@ export class MatchSimulator {
         heatmap: [...data.heatmap],
       };
     }
+    const tacticalEvents = this.tacticalEvents.map((event) => ({
+      ...event,
+      outcome: event.outcome === "attempted" ? "failed" as const : event.outcome,
+    }));
+    const tacticalAnalytics = buildTacticalAnalytics(tacticalEvents);
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       heatmapColumns: MATCH_HEATMAP_COLUMNS,
       heatmapRows: MATCH_HEATMAP_ROWS,
       generatedAtMinute: Math.floor(this.gameTime / 60),
@@ -706,6 +728,13 @@ export class MatchSimulator {
       finalAwayFormation: this.away.tactics.formation,
       players,
       tacticalChanges: this.tacticalChanges.map((change) => ({ ...change, changes: [...change.changes] })),
+      tacticalEvents,
+      teamSummaries: tacticalAnalytics.teamSummaries,
+      passNetworks: tacticalAnalytics.passNetworks,
+      initialHomePlayStyle: this.initialPlayStyles.home,
+      initialAwayPlayStyle: this.initialPlayStyles.away,
+      finalHomePlayStyle: this.home.tactics.playStyle,
+      finalAwayPlayStyle: this.away.tactics.playStyle,
       opponentPlans: {
         home: this.opponentPlans.home
           ? { ...this.opponentPlans.home, instructions: this.opponentPlans.home.instructions.map((instruction) => ({ ...instruction })) }
@@ -719,6 +748,91 @@ export class MatchSimulator {
         plan: { ...change.plan, instructions: change.plan.instructions.map((instruction) => ({ ...instruction })) },
       })),
     };
+  }
+
+  private orientedPoint(side: Side, x: number, y: number): { x: number; y: number } {
+    return side === "home"
+      ? { x: Math.round(x), y: Math.round(y) }
+      : { x: Math.round(PITCH_W - x), y: Math.round(PITCH_H - y) };
+  }
+
+  private tacticalPhaseFor(side: Side, x: number): TacticalMatchPhase {
+    if (this.setPiece || this.penaltyState || this.phase === "setpiece" || this.phase === "penalty") return "setPiece";
+    if (this.lastTurnover && this.lastTurnover.side === side && this.worldTime - this.lastTurnover.t < 6) return "counterAttack";
+    if (this.possessionSide !== side) return "defensiveTransition";
+    const viewed = this.orientedPoint(side, x, PITCH_H / 2).x;
+    return viewed < 390 ? "buildUp" : "settledAttack";
+  }
+
+  private recordTacticalEvent(input: {
+    side: Side;
+    type: TacticalEventType;
+    outcome?: TacticalEventOutcome;
+    playerId?: string;
+    relatedPlayerId?: string;
+    x: number;
+    y: number;
+    endX?: number;
+    endY?: number;
+    pressure?: number;
+    qualifier?: string;
+    expectedGoals?: number;
+  }): string {
+    const start = this.orientedPoint(input.side, input.x, input.y);
+    const end = input.endX !== undefined && input.endY !== undefined
+      ? this.orientedPoint(input.side, input.endX, input.endY)
+      : undefined;
+    const id = `te-${++this.tacticalEventCounter}`;
+    this.sequenceIndex += 1;
+    this.tacticalEvents.push({
+      id,
+      second: Number(this.gameTime.toFixed(1)),
+      minute: Math.floor(this.gameTime / 60),
+      side: input.side,
+      clubId: this.team(input.side).clubId,
+      type: input.type,
+      outcome: input.outcome ?? "attempted",
+      playerId: input.playerId,
+      relatedPlayerId: input.relatedPlayerId,
+      x: start.x,
+      y: start.y,
+      endX: end?.x,
+      endY: end?.y,
+      pressure: Number(clamp(input.pressure ?? 0, 0, 1).toFixed(2)),
+      phase: this.tacticalPhaseFor(input.side, input.x),
+      possessionId: this.possessionId,
+      sequenceIndex: this.sequenceIndex,
+      qualifier: input.qualifier,
+      expectedGoals: input.expectedGoals,
+    });
+    // A full match normally stays well below this, but malformed custom loops
+    // must not make a career save grow without limit.
+    if (this.tacticalEvents.length > 3000) this.tacticalEvents.shift();
+    return id;
+  }
+
+  private updateTacticalEvent(
+    id: string | undefined | null,
+    outcome: TacticalEventOutcome,
+    relatedPlayerId?: string,
+  ): void {
+    if (!id) return;
+    const event = this.tacticalEvents.find((candidate) => candidate.id === id);
+    if (!event) return;
+    event.outcome = outcome;
+    if (relatedPlayerId) event.relatedPlayerId = relatedPlayerId;
+  }
+
+  private finalizePendingFlight(receivingSide: Side, receiverId?: string): void {
+    if (!this.pendingFlightEventId) return;
+    const event = this.tacticalEvents.find((candidate) => candidate.id === this.pendingFlightEventId);
+    this.pendingFlightEventId = null;
+    if (!event) return;
+    const retained = event.side === receivingSide;
+    event.outcome = event.type === "dribble"
+      ? retained ? "won" : "lost"
+      : retained ? "complete" : "failed";
+    if (receiverId && retained) event.relatedPlayerId = receiverId;
   }
 
   private players(side: Side): SimPlayer[] {
@@ -1212,6 +1326,9 @@ export class MatchSimulator {
     this.phase = "kickoff";
     this.phaseTimer = 1.6;
     this.possessionSide = side;
+    if (reason !== "start") this.possessionId += 1;
+    this.sequenceIndex = 0;
+    this.pendingFlightEventId = null;
     this.carrier = null;
     this.flight = null;
     this.setPiece = null;
@@ -2229,6 +2346,17 @@ export class MatchSimulator {
       if (side === "home") this.stats.carriesHome += 1;
       else this.stats.carriesAway += 1;
       this.addPlayerStat(sp.p.id, "carries");
+      this.recordTacticalEvent({
+        side,
+        type: "carry",
+        outcome: "complete",
+        playerId: sp.p.id,
+        x: sp.x,
+        y: sp.y,
+        endX: channelX,
+        endY: sp.y,
+        pressure,
+      });
       if (
         (paceAbuser || (sp.p.pace >= 16 && behavior.transition > 1.2)) &&
         this.worldTime - sp.lastKnockOnAt > 2.2 &&
@@ -2300,10 +2428,39 @@ export class MatchSimulator {
         const res = resolveDribble(sp.p, defender.p, this.rng);
         this.statsTackleAttempt(this.other(side), defender.p.id);
         if (res.foul) {
+          this.recordTacticalEvent({
+            side,
+            type: "dribble",
+            outcome: "foul",
+            playerId: sp.p.id,
+            relatedPlayerId: defender.p.id,
+            x: sp.x,
+            y: sp.y,
+            pressure,
+          });
           this.awardFoul(side, defender, sp);
           return;
         }
         if (!res.beat) {
+          this.recordTacticalEvent({
+            side,
+            type: "dribble",
+            outcome: "lost",
+            playerId: sp.p.id,
+            relatedPlayerId: defender.p.id,
+            x: sp.x,
+            y: sp.y,
+            pressure,
+          });
+          this.recordTacticalEvent({
+            side: this.other(side),
+            type: "tackle",
+            outcome: "won",
+            playerId: defender.p.id,
+            relatedPlayerId: sp.p.id,
+            x: defender.x,
+            y: defender.y,
+          });
           this.addPlayerStat(sp.p.id, "possessionLost");
           this.addPlayerStat(defender.p.id, "tacklesWon");
           this.addPlayerStat(defender.p.id, "recoveries");
@@ -2404,6 +2561,7 @@ export class MatchSimulator {
       arcH: this.rng.float(48, 82),
       flavor: "lofted",
       passerId: sp.p.id,
+      analyticsType: "clearance",
     });
     this.lastTouchSide = side;
     this.possessionSide = side;
@@ -2981,6 +3139,42 @@ export class MatchSimulator {
   }
 
   private launchFlight(f: Flight): void {
+    if (this.pendingFlightEventId) {
+      this.updateTacticalEvent(this.pendingFlightEventId, "failed");
+      this.pendingFlightEventId = null;
+    }
+    const actor = f.passerId
+      ? this.players(f.side).find((player) => player.p.id === f.passerId)
+      : undefined;
+    const target = f.targetIdx !== undefined ? this.players(f.side)[f.targetIdx] : undefined;
+    const eventType: TacticalEventType = f.analyticsType ??
+      (f.kind === "shot" ? "shot" :
+       f.kind === "cross" || f.flavor === "pullback" ? "cross" :
+       f.kind === "knockOn" ? "dribble" :
+       f.flavor === "through" ? "throughBall" : "pass");
+    const shotOutcome: TacticalEventOutcome | undefined = f.kind === "shot"
+      ? f.shotOutcome?.goal ? "goal"
+        : f.shotOutcome?.saved ? "saved"
+          : f.shotOutcome?.blocked ? "blocked" : "wide"
+      : undefined;
+    const start = this.orientedPoint(f.side, f.fromX, f.fromY);
+    const pressure = actor ? this.pressureOn(f.side, this.indexOfPlayer(f.side, actor)) : 0;
+    const eventId = this.recordTacticalEvent({
+      side: f.side,
+      type: eventType,
+      outcome: shotOutcome,
+      playerId: f.passerId,
+      relatedPlayerId: target?.p.id,
+      x: f.fromX,
+      y: f.fromY,
+      endX: f.toX,
+      endY: f.toY,
+      pressure,
+      qualifier: f.penalty ? "penalty" : f.flavor,
+      expectedGoals: f.kind === "shot" ? expectedGoalsAt(start.x, start.y, pressure, f.penalty ? "penalty" : undefined) : undefined,
+    });
+    f.analyticsEventId = eventId;
+    if (f.kind !== "shot") this.pendingFlightEventId = eventId;
     this.flight = f;
     this.ballHeight = 0;
     this.controlledBallVelocity = { x: 0, y: 0 };
@@ -3061,6 +3255,15 @@ export class MatchSimulator {
 
     this.flight = null;
     this.ballHeight = 0;
+    this.recordTacticalEvent({
+      side: this.other(f.side),
+      type: "interception",
+      outcome: "won",
+      playerId: candidate.sp.p.id,
+      relatedPlayerId: f.passerId,
+      x: candidate.sp.x,
+      y: candidate.sp.y,
+    });
     this.addPlayerStat(candidate.sp.p.id, "interceptions");
     this.addPlayerStat(candidate.sp.p.id, "recoveries");
     this.addPlayerStat(f.passerId, "possessionLost");
@@ -3195,6 +3398,8 @@ export class MatchSimulator {
     const dy = f.toY - f.fromY;
     const d = Math.hypot(dx, dy) || 1;
     const roll = f.flavor === "through" ? 25 : 8;
+    this.updateTacticalEvent(f.analyticsEventId, "failed");
+    if (this.pendingFlightEventId === f.analyticsEventId) this.pendingFlightEventId = null;
     this.addPlayerStat(f.passerId, "possessionLost");
     this.makeLoose(f.toX, f.toY, side, (dx / d) * roll, (dy / d) * roll);
   }
@@ -3223,6 +3428,8 @@ export class MatchSimulator {
 
     this.addPlayerStat(receiver.p.id, "touches");
     this.addPlayerStat(receiver.p.id, "possessionLost");
+    this.updateTacticalEvent(f.analyticsEventId, "failed", receiver.p.id);
+    if (this.pendingFlightEventId === f.analyticsEventId) this.pendingFlightEventId = null;
     // A failed first touch visibly escapes 1.5–4 metres. It can still be
     // recovered; there is no instantaneous dice-roll turnover.
     const dx = f.toX - f.fromX;
@@ -3259,6 +3466,17 @@ export class MatchSimulator {
       if (gkIdx < 0) gkIdx = this.nearestPlayerIndex(defending, f.toX, f.toY);
       const gk = this.players(defending)[gkIdx];
       if (gk) {
+        const shotEvent = this.tacticalEvents.find((event) => event.id === f.analyticsEventId);
+        if (shotEvent) shotEvent.relatedPlayerId = gk.p.id;
+        this.recordTacticalEvent({
+          side: defending,
+          type: "save",
+          outcome: "won",
+          playerId: gk.p.id,
+          relatedPlayerId: f.passerId,
+          x: gk.x,
+          y: gk.y,
+        });
         this.addPlayerStat(gk.p.id, "saves");
         this.addPlayerStat(gk.p.id, "recoveries");
         this.bumpRating(gk, 0.25);
@@ -3356,7 +3574,24 @@ export class MatchSimulator {
     if (!res.cleared) {
       this.addPlayerStat(att.p.id, "aerialDuelsWon");
       this.statsPassComplete(attacking, f.passerId, true);
+      this.updateTacticalEvent(f.analyticsEventId, "complete", att.p.id);
+      if (this.pendingFlightEventId === f.analyticsEventId) this.pendingFlightEventId = null;
       this.recordShot(attacking, att.p.id, res.goal || res.saved);
+      const shotPoint = this.orientedPoint(attacking, att.x, att.y);
+      this.recordTacticalEvent({
+        side: attacking,
+        type: "shot",
+        outcome: res.goal ? "goal" : res.saved ? "saved" : "wide",
+        playerId: att.p.id,
+        relatedPlayerId: res.saved ? gk.p.id : undefined,
+        x: att.x,
+        y: att.y,
+        endX: this.goalX(attacking),
+        endY: PITCH_H / 2,
+        pressure: 0.55,
+        qualifier: "header",
+        expectedGoals: expectedGoalsAt(shotPoint.x, shotPoint.y, 0.55),
+      });
     } else {
       this.addPlayerStat(def.p.id, "aerialDuelsWon");
       this.addPlayerStat(def.p.id, "clearances");
@@ -3436,8 +3671,19 @@ export class MatchSimulator {
       this.makeLoose(this.ball.x, this.ball.y, side);
       return;
     }
+    this.finalizePendingFlight(side, p.p.id);
     if (this.possessionSide !== side) {
+      this.possessionId += 1;
+      this.sequenceIndex = 0;
       this.lastTurnover = { side, t: this.worldTime };
+      this.recordTacticalEvent({
+        side,
+        type: "recovery",
+        outcome: "won",
+        playerId: p.p.id,
+        x: p.x,
+        y: p.y,
+      });
     }
     if (this.looseDribbleRace && this.looseDribbleRace.side !== side) {
       const runner = this.players(this.looseDribbleRace.side)[this.looseDribbleRace.idx];
@@ -3596,6 +3842,15 @@ export class MatchSimulator {
 
       this.statsTackleAttempt(this.other(side), op.p.id);
       const res = resolveTackle(op.p, sp.p, this.rng);
+      this.recordTacticalEvent({
+        side: this.other(side),
+        type: "tackle",
+        outcome: res.won ? "won" : res.foul ? "foul" : "failed",
+        playerId: op.p.id,
+        relatedPlayerId: sp.p.id,
+        x: op.x,
+        y: op.y,
+      });
       if (res.won) {
         const defending = this.other(side);
         this.addPlayerStat(op.p.id, "tacklesWon");
@@ -3632,6 +3887,15 @@ export class MatchSimulator {
   ): void {
     const foulSide = this.other(fouledSide);
     this.statsFoul(foulSide);
+    this.recordTacticalEvent({
+      side: foulSide,
+      type: "foul",
+      outcome: "foul",
+      playerId: offender.p.id,
+      relatedPlayerId: victim.p.id,
+      x: offender.x,
+      y: offender.y,
+    });
     this.addPlayerStat(offender.p.id, "foulsCommitted");
     this.addPlayerStat(victim.p.id, "foulsWon");
     this.bumpRating(offender, -0.12);
@@ -3769,6 +4033,11 @@ export class MatchSimulator {
   }
 
   private startSetPiece(kind: SetPiece["kind"], side: Side, x: number, y: number): void {
+    this.finalizePendingFlight(side);
+    if (this.possessionSide !== side) {
+      this.possessionId += 1;
+      this.sequenceIndex = 0;
+    }
     const sx = clamp(x, 5, 995);
     const sy = clamp(y, 5, 645);
     this.phase = "setpiece";

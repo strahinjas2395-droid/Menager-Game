@@ -213,8 +213,13 @@ describe("MatchSimulator", () => {
     const state = sim.getState();
     const analysis = state.analysis;
     expect(analysis).toBeDefined();
-    expect(analysis?.schemaVersion).toBe(1);
+    expect(analysis?.schemaVersion).toBe(2);
     expect(Object.keys(analysis?.players ?? {}).length).toBeGreaterThanOrEqual(22);
+    expect(analysis?.tacticalEvents?.length).toBeGreaterThan(40);
+    expect(analysis?.tacticalEvents?.some((event) => event.type === "pass" || event.type === "throughBall")).toBe(true);
+    expect(analysis?.tacticalEvents?.some((event) => event.type === "shot" && (event.expectedGoals ?? 0) > 0)).toBe(true);
+    expect(analysis?.teamSummaries?.home.possessionSequences).toBeGreaterThan(0);
+    expect(analysis?.passNetworks?.home.length).toBeGreaterThan(0);
 
     const players = Object.values(analysis?.players ?? {});
     const homePlayers = players.filter((player) => player.side === "home");

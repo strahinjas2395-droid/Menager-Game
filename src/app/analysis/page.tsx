@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, BarChart3, CalendarDays, ChevronRight, Footprints, Target, Users } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import PlayerHeatmap from "@/components/PlayerHeatmap";
+import TacticalEventMap from "@/components/TacticalEventMap";
 import { summarizeOpponentInstruction } from "@/engine/matchPlan";
 import { playerRoleDefinition } from "@/engine/playerRoles";
 import { useGameStore } from "@/store/gameStore";
@@ -15,6 +16,8 @@ import {
   type MatchResult,
   type MatchStats,
   type PlayerMatchAnalysis,
+  type TacticalEvent,
+  type TacticalEventType,
 } from "@/types";
 
 type ViewMode = "matches" | "players";
@@ -264,6 +267,12 @@ function MatchView({
             opponentName={side === "home" ? awayName : homeName}
           />
 
+          <TacticalOverview
+            result={selected}
+            side={side}
+            teamName={side === "home" ? homeName : awayName}
+          />
+
           <section className="card-panel mt-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="stat-label text-gold">Player Reports</span>
@@ -315,6 +324,122 @@ function MatchView({
       )}
     </>
   );
+}
+
+type EventFilter = "all" | "passing" | "carrying" | "shooting" | "defending";
+
+function TacticalOverview({
+  result,
+  side,
+  teamName,
+}: {
+  result: MatchResult;
+  side: Side;
+  teamName: string;
+}) {
+  const [filter, setFilter] = useState<EventFilter>("all");
+  const analysis = result.analysis;
+  const summary = analysis?.teamSummaries?.[side];
+  const allEvents = (analysis?.tacticalEvents ?? []).filter((event) => event.side === side);
+  if (!summary || !allEvents.length) return null;
+  const groups: Record<Exclude<EventFilter, "all">, TacticalEventType[]> = {
+    passing: ["pass", "throughBall", "cross", "clearance"],
+    carrying: ["carry", "dribble"],
+    shooting: ["shot"],
+    defending: ["tackle", "interception", "recovery", "foul", "save"],
+  };
+  const events = filter === "all" ? allEvents : allEvents.filter((event) => groups[filter].includes(event.type));
+  const playerName = (playerId: string | undefined) =>
+    playerId ? analysis?.players[playerId]?.playerName ?? playerId : "Team";
+  const network = analysis?.passNetworks?.[side] ?? [];
+  const channelTotal = summary.leftChannelActions + summary.centralChannelActions + summary.rightChannelActions;
+
+  return (
+    <section className="card-panel mt-3 border-cyan-300/20">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="stat-label text-gold">Event-Level Tactical Analysis</div>
+          <h2 className="mt-1 text-base font-black">{shortName(teamName)} action map</h2>
+          <p className="text-[9px] text-white/40">Every line and point comes from a simulation action, not commentary text.</p>
+        </div>
+        <div className="rounded-lg bg-gold/10 px-2.5 py-1.5 text-center"><div className="text-[8px] uppercase text-white/35">xG</div><b className="text-lg text-gold">{summary.expectedGoals.toFixed(2)}</b></div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-6">
+        <PlanOutcome label="Final-third entries" value={summary.finalThirdEntries} />
+        <PlanOutcome label="Box entries" value={summary.boxEntries} />
+        <PlanOutcome label="Progressive passes" value={summary.progressivePasses} />
+        <PlanOutcome label="High regains" value={summary.highRegains} />
+        <PlanOutcome label="Field tilt" value={`${summary.fieldTilt}%`} />
+        <PlanOutcome label="PPDA" value={summary.ppda.toFixed(1)} />
+      </div>
+
+      <div className="mt-3 flex gap-1 overflow-x-auto pb-1">
+        {(["all", "passing", "carrying", "shooting", "defending"] as EventFilter[]).map((value) => (
+          <button key={value} type="button" onClick={() => setFilter(value)} className={`shrink-0 rounded-lg px-2.5 py-1.5 text-[9px] font-bold capitalize ${filter === value ? "bg-gold text-navy" : "bg-navy text-white/50"}`}>
+            {value}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2"><TacticalEventMap events={events} label={`${teamName} ${filter} event map`} /></div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl bg-navy/60 p-3">
+          <div className="stat-label">Attack Channels</div>
+          <div className="mt-2 flex h-3 overflow-hidden rounded-full bg-white/5">
+            <div className="bg-blue-400" style={{ width: `${channelTotal ? summary.leftChannelActions / channelTotal * 100 : 0}%` }} />
+            <div className="bg-gold" style={{ width: `${channelTotal ? summary.centralChannelActions / channelTotal * 100 : 0}%` }} />
+            <div className="bg-purple-400" style={{ width: `${channelTotal ? summary.rightChannelActions / channelTotal * 100 : 0}%` }} />
+          </div>
+          <div className="mt-1.5 grid grid-cols-3 text-center text-[8px] text-white/45"><span>Left {percent(summary.leftChannelActions, channelTotal)}</span><span>Centre {percent(summary.centralChannelActions, channelTotal)}</span><span>Right {percent(summary.rightChannelActions, channelTotal)}</span></div>
+          <div className="mt-3 grid grid-cols-3 gap-1.5">
+            <PlanOutcome label="Sequences" value={summary.possessionSequences} />
+            <PlanOutcome label="Actions / seq." value={summary.averageSequenceActions.toFixed(1)} />
+            <PlanOutcome label="Direct attacks" value={summary.directAttacks} />
+          </div>
+        </div>
+        <div className="rounded-xl bg-navy/60 p-3">
+          <div className="stat-label">Most-used Passing Links</div>
+          <div className="mt-2 space-y-1.5">
+            {network.slice(0, 5).map((edge) => (
+              <div key={`${edge.fromPlayerId}-${edge.toPlayerId}`} className="grid grid-cols-[1fr_auto] items-center gap-2 text-[9px]">
+                <span className="truncate text-white/60">{shortName(playerName(edge.fromPlayerId))} → {shortName(playerName(edge.toPlayerId))}</span>
+                <b className="text-gold">{edge.completed}<span className="ml-1 font-normal text-white/30">({edge.progressive} prog.)</span></b>
+              </div>
+            ))}
+            {!network.length && <p className="text-[9px] text-white/35">No completed passing link was recorded.</p>}
+          </div>
+        </div>
+      </div>
+
+      <details className="mt-3 rounded-xl border border-white/10 bg-navy/50 p-2.5">
+        <summary className="cursor-pointer text-[9px] font-bold uppercase tracking-wide text-white/55">Inspect {events.length} exact events</summary>
+        <div className="mt-2 max-h-64 space-y-1 overflow-y-auto">
+          {[...events].reverse().map((event) => <EventRow key={event.id} event={event} playerName={playerName} />)}
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function EventRow({ event, playerName }: { event: TacticalEvent; playerName: (id: string | undefined) => string }) {
+  const minute = Math.floor(event.second / 60);
+  const second = Math.floor(event.second % 60);
+  return (
+    <div className="grid grid-cols-[42px_1fr_auto] items-center gap-2 rounded-md bg-card px-2 py-1.5 text-[9px]">
+      <b className="tabular-nums text-gold">{minute}:{String(second).padStart(2, "0")}</b>
+      <span className="min-w-0 truncate text-white/60">{shortName(playerName(event.playerId))}{event.relatedPlayerId ? ` → ${shortName(playerName(event.relatedPlayerId))}` : ""} · {humanizeEvent(event.type)} · {humanizeEvent(event.phase)}</span>
+      <span className={`font-bold ${["complete", "won", "goal", "saved"].includes(event.outcome) ? "text-green-400" : ["failed", "lost", "wide"].includes(event.outcome) ? "text-red-300" : "text-white/45"}`}>{event.outcome}{event.expectedGoals !== undefined ? ` · ${event.expectedGoals.toFixed(2)} xG` : ""}</span>
+    </div>
+  );
+}
+
+function percent(value: number, total: number): string {
+  return `${Math.round(value / Math.max(1, total) * 100)}%`;
+}
+
+function humanizeEvent(value: string): string {
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
 }
 
 function OpponentPlanReview({

@@ -707,6 +707,92 @@ export interface PlayerMatchAnalysis {
   heatmap: number[];
 }
 
+export type TacticalEventType =
+  | "pass"
+  | "throughBall"
+  | "cross"
+  | "carry"
+  | "dribble"
+  | "shot"
+  | "clearance"
+  | "tackle"
+  | "interception"
+  | "recovery"
+  | "foul"
+  | "save";
+
+export type TacticalEventOutcome =
+  | "attempted"
+  | "complete"
+  | "failed"
+  | "won"
+  | "lost"
+  | "goal"
+  | "saved"
+  | "blocked"
+  | "wide"
+  | "foul";
+
+export type TacticalMatchPhase =
+  | "buildUp"
+  | "settledAttack"
+  | "counterAttack"
+  | "defensiveTransition"
+  | "setPiece";
+
+/** Durable, coordinate-level action captured directly by the simulation. */
+export interface TacticalEvent {
+  id: string;
+  second: number;
+  minute: number;
+  side: "home" | "away";
+  clubId: string;
+  type: TacticalEventType;
+  outcome: TacticalEventOutcome;
+  playerId?: string;
+  relatedPlayerId?: string;
+  /** Team-oriented coordinates: the acting side always attacks from x=0 to x=1000. */
+  x: number;
+  y: number;
+  endX?: number;
+  endY?: number;
+  pressure: number;
+  phase: TacticalMatchPhase;
+  possessionId: number;
+  sequenceIndex: number;
+  qualifier?: string;
+  expectedGoals?: number;
+}
+
+export interface TacticalTeamSummary {
+  side: "home" | "away";
+  expectedGoals: number;
+  passesAttempted: number;
+  passesCompleted: number;
+  progressivePasses: number;
+  finalThirdEntries: number;
+  boxEntries: number;
+  highRegains: number;
+  turnovers: number;
+  pressingActions: number;
+  possessionSequences: number;
+  averageSequenceActions: number;
+  directAttacks: number;
+  leftChannelActions: number;
+  centralChannelActions: number;
+  rightChannelActions: number;
+  fieldTilt: number;
+  ppda: number;
+}
+
+export interface PassNetworkEdge {
+  side: "home" | "away";
+  fromPlayerId: string;
+  toPlayerId: string;
+  completed: number;
+  progressive: number;
+}
+
 export interface TacticalChangeRecord {
   side: "home" | "away";
   clubId: string;
@@ -722,7 +808,8 @@ export interface TacticalChangeRecord {
 
 /** Versioned telemetry embedded in a result so reports survive future seasons. */
 export interface MatchAnalysis {
-  schemaVersion: 1;
+  /** v1 contained player totals; v2 adds coordinate-level tactical events. */
+  schemaVersion: 1 | 2;
   heatmapColumns: typeof MATCH_HEATMAP_COLUMNS;
   heatmapRows: typeof MATCH_HEATMAP_ROWS;
   generatedAtMinute: number;
@@ -732,6 +819,20 @@ export interface MatchAnalysis {
   finalAwayFormation: string;
   players: Record<string, PlayerMatchAnalysis>;
   tacticalChanges: TacticalChangeRecord[];
+  /** Event stream and derived tactical views are optional on legacy reports. */
+  tacticalEvents?: TacticalEvent[];
+  teamSummaries?: {
+    home: TacticalTeamSummary;
+    away: TacticalTeamSummary;
+  };
+  passNetworks?: {
+    home: PassNetworkEdge[];
+    away: PassNetworkEdge[];
+  };
+  initialHomePlayStyle?: PlayStyle;
+  initialAwayPlayStyle?: PlayStyle;
+  finalHomePlayStyle?: PlayStyle;
+  finalAwayPlayStyle?: PlayStyle;
   /** Fixture plans actually used by each side, retained for post-match review. */
   opponentPlans?: {
     home?: OpponentMatchPlan;
