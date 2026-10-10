@@ -915,6 +915,50 @@ export interface WorldDatabase {
   fixtures: Record<string, Fixture>;
 }
 
+export interface ManagerMemoryPlayer {
+  playerId: string;
+  playerName: string;
+  meetings: number;
+  goals: number;
+  assists: number;
+  averageRating: number;
+  shots: number;
+  keyPasses: number;
+  lastSeenSeason: number;
+  lastSeenWeek: number;
+}
+
+export interface ManagerMemoryEncounter {
+  fixtureId: string;
+  seasonYear: number;
+  week: number;
+  result: "W" | "D" | "L";
+  goalsFor: number;
+  goalsAgainst: number;
+  userFormation: string;
+  userPlayStyle: PlayStyle;
+  userExpectedGoals: number;
+  userFieldTilt: number;
+  userHighRegains: number;
+  topThreatPlayerIds: string[];
+}
+
+/** Persistent knowledge held by one exact AI manager across fixtures/seasons. */
+export interface PersistentManagerMemory {
+  schemaVersion: 1;
+  managerId: string;
+  clubId: string;
+  meetings: number;
+  lastUpdatedSeason: number;
+  lastUpdatedWeek: number;
+  encounters: ManagerMemoryEncounter[];
+  observedFormations: Record<string, number>;
+  observedPlayStyles: Partial<Record<PlayStyle, number>>;
+  playerKnowledge: Record<string, ManagerMemoryPlayer>;
+  tacticalLessons: string[];
+  confidence: number;
+}
+
 export interface GameSave {
   version: number;
   seed: number;
@@ -933,6 +977,8 @@ export interface GameSave {
   results: Record<string, MatchResult>;
   /** User-authored, fixture-specific plans. Optional for pre-feature saves. */
   opponentPlans?: Record<string, OpponentMatchPlan>;
+  /** Knowledge accumulated by exact AI manager identity. Optional for older careers. */
+  managerMemories?: Record<string, PersistentManagerMemory>;
   settings: GameSettings;
   savedAt: number;
 }

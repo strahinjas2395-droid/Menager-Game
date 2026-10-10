@@ -28,6 +28,7 @@ import {
   type Player,
   type PlayerMatchAnalysis,
   type PlayerRoleAssignment,
+  type PersistentManagerMemory,
   type TacticalChangeRecord,
   type TacticalEvent,
   type TacticalEventOutcome,
@@ -97,6 +98,8 @@ export interface TeamSide {
     tacticalFlexibility: number;
     reputation: number;
   };
+  /** Persistent knowledge this exact AI manager has of the user. */
+  managerMemory?: PersistentManagerMemory;
   /** Fixture-specific instructions against exact opposition players. */
   opponentPlan?: OpponentMatchPlan;
   /** Parsed team-wide natural-language instruction. */
@@ -537,6 +540,7 @@ export class MatchSimulator {
             team.starters.map((player, index) => ({ player, role: team.roles[index] ?? player.primaryPosition })),
             opposition.starters.map((player, index) => ({ player, role: opposition.roles[index] ?? player.primaryPosition })),
             this.difficulty,
+            team.managerMemory,
           );
       const initialPlan = this.opponentPlans[side];
       if (initialPlan) {
@@ -4635,7 +4639,13 @@ export class MatchSimulator {
     const opposition = this.players(this.other(side))
       .filter((player) => !player.sentOff)
       .map((player) => ({ player: player.p, role: player.role }));
-    this.updateOpponentPlan(side, buildAIOpponentMatchPlan(this.fixtureId, own, opposition, this.difficulty));
+    this.updateOpponentPlan(side, buildAIOpponentMatchPlan(
+      this.fixtureId,
+      own,
+      opposition,
+      this.difficulty,
+      team.managerMemory,
+    ));
   }
 
   private tickAIManager(): void {

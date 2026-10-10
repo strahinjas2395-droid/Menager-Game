@@ -180,6 +180,59 @@ function OppositionScreen() {
           </div>
         </section>
 
+        <section className="card-panel mt-3 border-purple-400/25">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-purple-300"><BrainCircuit size={16} /><span className="stat-label text-purple-300">AI Manager Memory</span></div>
+              <h2 className="mt-1 text-sm font-black">What {report.coach.name} remembers about you</h2>
+            </div>
+            <span className="rounded-full bg-purple-400/10 px-2 py-1 text-[9px] font-bold text-purple-200">
+              {report.managerMemory ? `${report.managerMemory.meetings} meeting${report.managerMemory.meetings === 1 ? "" : "s"}` : "First meeting"}
+            </span>
+          </div>
+          {report.managerMemory ? (
+            <>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <MiniStat label="Recall confidence" value={`${Math.round(report.managerMemory.confidence * 100)}%`} />
+                <MiniStat label="Last result" value={report.managerMemory.lastResult ?? "—"} />
+                <MiniStat label="Last score" value={report.managerMemory.lastScore ?? "—"} />
+                <MiniStat label="Known players" value={String(report.managerMemory.rememberedPlayers.length)} />
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg bg-navy/60 p-2.5">
+                  <div className="text-[9px] font-bold uppercase tracking-wide text-white/35">Learned patterns</div>
+                  <ul className="mt-1.5 space-y-1 text-[10px] text-white/60">
+                    {report.managerMemory.lessons.map((lesson) => <li key={lesson}>• {lesson}</li>)}
+                  </ul>
+                </div>
+                <div className="rounded-lg bg-navy/60 p-2.5">
+                  <div className="text-[9px] font-bold uppercase tracking-wide text-white/35">Remembered response</div>
+                  <ul className="mt-1.5 space-y-1 text-[10px] text-white/60">
+                    {report.managerMemory.adaptations.length
+                      ? report.managerMemory.adaptations.map((adaptation) => <li key={adaptation}>• {adaptation}</li>)
+                      : <li>• No memory-driven adjustment at this difficulty yet</li>}
+                  </ul>
+                </div>
+              </div>
+              {report.managerMemory.rememberedPlayers.length > 0 && (
+                <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                  {report.managerMemory.rememberedPlayers.map((player) => (
+                    <div key={player.playerId} className="min-w-[145px] rounded-lg border border-white/10 bg-navy/60 p-2">
+                      <div className="truncate text-[10px] font-bold">{player.name}</div>
+                      <div className="mt-1 text-[9px] text-white/40">Seen {player.meetings}× · {player.goals}G {player.assists}A</div>
+                      <div className="mt-1 text-xs font-black text-purple-200">{player.averageRating.toFixed(1)} avg</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="mt-3 rounded-lg border border-dashed border-white/10 bg-navy/40 p-3 text-[10px] leading-relaxed text-white/45">
+              This coach has no previous structured evidence about your formation, style or danger players. After the match, their observations will persist into future seasons.
+            </p>
+          )}
+        </section>
+
         <section className="card-panel mt-3">
           <div className="flex items-center justify-between gap-3">
             <div>

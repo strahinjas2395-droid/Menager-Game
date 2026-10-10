@@ -3,8 +3,10 @@ import {
   type MatchPlanAttackApproach,
   type OpponentMatchPlan,
   type OpponentPlayerPlan,
+  type PersistentManagerMemory,
   type Player,
 } from "@/types";
+import { memoryPlayerThreatBonus } from "@/engine/managerMemory";
 
 export interface MatchPlanPlayer {
   player: Player;
@@ -118,13 +120,17 @@ export function buildAIOpponentMatchPlan(
   own: readonly MatchPlanPlayer[],
   opponents: readonly MatchPlanPlayer[],
   difficulty: Difficulty | string | undefined,
+  memory?: PersistentManagerMemory,
 ): OpponentMatchPlan {
   const level = difficultyLevel(difficulty);
   if (!own.length || !opponents.length || level === 0) return emptyOpponentMatchPlan(fixtureId, "ai");
 
   const threats = [...opponents]
     .filter(({ role }) => role !== "GK")
-    .map((entry) => ({ ...entry, threat: threatScore(entry.player, entry.role) }))
+    .map((entry) => ({
+      ...entry,
+      threat: threatScore(entry.player, entry.role) + memoryPlayerThreatBonus(memory, entry.player.id, difficulty),
+    }))
     .sort((a, b) => b.threat - a.threat || a.player.id.localeCompare(b.player.id));
   const focusCount = level >= 6 ? 2 : 1;
   const instructions: OpponentPlayerPlan[] = [];

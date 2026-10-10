@@ -9,6 +9,7 @@ import {
   type TacticalSetup,
 } from "@/types";
 import type { TeamSide } from "@/engine/matchSimulator";
+import { adaptTacticsToManagerMemory } from "@/engine/managerMemory";
 
 export interface OppositionPlayerReport {
   playerId: string;
@@ -61,6 +62,15 @@ export interface OppositionReport {
     cleanSheets: number;
   };
   recentForm: { fixtureId: string; opponent: string; result: "W" | "D" | "L"; score: string }[];
+  managerMemory: {
+    meetings: number;
+    confidence: number;
+    lastResult?: "W" | "D" | "L";
+    lastScore?: string;
+    lessons: string[];
+    adaptations: string[];
+    rememberedPlayers: { playerId: string; name: string; meetings: number; goals: number; assists: number; averageRating: number }[];
+  } | null;
 }
 
 interface Dimension {
@@ -147,6 +157,21 @@ export function buildOppositionReport(
       score: `${gf}-${ga}`,
     };
   });
+  const memory = save.managerMemories?.[manager.id];
+  const latestMemory = memory?.encounters.at(-1);
+  const rememberedPlayers = Object.values(memory?.playerKnowledge ?? {})
+    .filter((known) => save.world.clubs[save.userClubId]?.playerIds.includes(known.playerId))
+    .sort((a, b) => b.averageRating - a.averageRating || b.goals - a.goals)
+    .slice(0, 4)
+    .map((known) => ({
+      playerId: known.playerId,
+      name: known.playerName,
+      meetings: known.meetings,
+      goals: known.goals,
+      assists: known.assists,
+      averageRating: known.averageRating,
+    }));
+  const memoryAdaptation = adaptTacticsToManagerMemory(opponentTeam.tactics, memory, save.difficulty);
 
   return {
     fixtureId: fixture.id,
@@ -177,6 +202,15 @@ export function buildOppositionReport(
     likelyThreats: likelyThreats(opponentTeam.tactics.playStyle, dangerousPlayers),
     seasonRecord,
     recentForm,
+    managerMemory: memory ? {
+      meetings: memory.meetings,
+      confidence: memory.confidence,
+      lastResult: latestMemory?.result,
+      lastScore: latestMemory ? `${latestMemory.goalsFor}-${latestMemory.goalsAgainst}` : undefined,
+      lessons: [...memory.tacticalLessons],
+      adaptations: memoryAdaptation.reasons,
+      rememberedPlayers,
+    } : null,
   };
 }
 

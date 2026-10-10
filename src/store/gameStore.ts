@@ -33,6 +33,7 @@ import { calculateStandings } from "@/engine/leagueEngine";
 import { buildTeamSide, type TeamSide } from "@/engine/matchSimulator";
 import { buildInstructionRoster, compileInstructionPlans } from "@/engine/directives";
 import { sanitizeOpponentMatchPlan } from "@/engine/matchPlan";
+import { adaptTacticsToManagerMemory, rememberManagerMatch } from "@/engine/managerMemory";
 import { saveGame, loadGame, deleteSave } from "@/database/storage";
 import { aiTransferActivity } from "@/engine/transferEngine";
 import { CONTINENTAL_ID } from "@/engine/continentalEngine";
@@ -320,6 +321,7 @@ export const useGameStore = create<GameState>((set, get) => {
         offers: [],
         results: {},
         opponentPlans: {},
+        managerMemories: {},
         settings: { ...DEFAULT_SETTINGS },
         savedAt: Date.now(),
       };
@@ -392,6 +394,24 @@ export const useGameStore = create<GameState>((set, get) => {
         homeClubName: result.homeClubName ?? save.world.clubs[fixture.homeClubId]?.name ?? fixture.homeClubId,
         awayClubName: result.awayClubName ?? save.world.clubs[fixture.awayClubId]?.name ?? fixture.awayClubId,
       };
+
+      const opponentClubId = fixture.homeClubId === save.userClubId ? fixture.awayClubId : fixture.homeClubId;
+      const opponentClub = save.world.clubs[opponentClubId];
+      const opponentManager = opponentClub ? save.world.managers[opponentClub.managerId] : undefined;
+      if (opponentManager) {
+        save.managerMemories ??= {};
+        save.managerMemories[opponentManager.id] = rememberManagerMatch(
+          save.managerMemories[opponentManager.id],
+          {
+            manager: opponentManager,
+            fixture,
+            result,
+            userClubId: save.userClubId,
+            seasonYear: save.season.seasonYear,
+            week: fixture.week,
+          },
+        );
+      }
 
       // Detailed reports are authoritative for appearances, goals, assists and
       // discipline. Older saves/results retain the event-based fallback.
@@ -598,7 +618,10 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
       playStyle: PlayStyle.Balanced,
       tacticalFlexibility: 8,
     };
-    const tactics = isUser ? save.tacticalSetup : tacticsFromManager(manager);
+    const managerMemory = isUser ? undefined : save.managerMemories?.[manager.id];
+    const tactics = isUser
+      ? save.tacticalSetup
+      : adaptTacticsToManagerMemory(tacticsFromManager(manager), managerMemory, save.difficulty).tactics;
     const side = buildTeamSide({
       clubId,
       name: club.name,
@@ -616,6 +639,8 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
         reputation: manager.reputation,
       },
     });
+
+    if (!isUser && managerMemory) side.managerMemory = managerMemory;
 
     if (isUser) {
       side.opponentPlan = save.opponentPlans?.[fixtureId];

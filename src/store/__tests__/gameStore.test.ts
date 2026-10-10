@@ -229,6 +229,11 @@ describe("core game loop (integration)", () => {
       : legacyRoleContext.away.tactics.playerRoles).toBeUndefined();
     store().save!.tacticalSetup.playerRoles = currentPlayerRoles;
 
+    const currentManagerMemories = store().save!.managerMemories;
+    delete store().save!.managerMemories;
+    expect(getMatchContext(store().save!, week1UserFixture.id)).toBeTruthy();
+    store().save!.managerMemories = currentManagerMemories;
+
     const buildResult = (fixtureId: string): MatchResult => {
       const s = store().save!;
       const fixture = s.world.fixtures[fixtureId];
@@ -323,6 +328,13 @@ describe("core game loop (integration)", () => {
       expect(result.awayClubName).toBeTruthy();
       expect(result.analysis?.players).toBeTruthy();
     }
+
+    // Exact opposition managers retain structured memories across fixtures.
+    expect(Object.keys(after.managerMemories ?? {}).length).toBeGreaterThan(0);
+    const remembered = Object.values(after.managerMemories ?? {})[0];
+    expect(remembered.meetings).toBeGreaterThan(0);
+    expect(remembered.encounters[0]?.fixtureId).toBeTruthy();
+    expect(Object.keys(remembered.playerKnowledge).length).toBeGreaterThan(0);
 
     // player season stats updated (user squad has appearances)
     const anyUserPlayer = after.world.clubs[clubId].playerIds
