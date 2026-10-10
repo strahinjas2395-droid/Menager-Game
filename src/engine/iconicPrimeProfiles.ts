@@ -551,11 +551,14 @@ export const ICONIC_PRIME_PROFILES: Readonly<Record<string, IconicPrimeProfile>>
 
 const PROFILE_BY_ALIAS = new Map(Object.values(ICONIC_PRIME_PROFILES).map((profile) => [profile.alias, profile]));
 
-type IconicProfileLookup = Pick<Player, "iconicPrimeProfileId"> &
+type IconicProfileLookup = Pick<Player, "iconicPrimeProfileId" | "modernPlayerIdentityId"> &
   Partial<Pick<Player, "firstName" | "lastName">>;
 
 export function getIconicPrimeProfile(playerOrId: IconicProfileLookup | string | undefined): IconicPrimeProfile | undefined {
   if (typeof playerOrId === "string") return ICONIC_PRIME_PROFILES[playerOrId];
+  // A contemporary-mode identity can resemble the transformed iconic spelling,
+  // but must never inherit the special mode's prime mechanics.
+  if (playerOrId?.modernPlayerIdentityId) return undefined;
   const byId = playerOrId?.iconicPrimeProfileId
     ? ICONIC_PRIME_PROFILES[playerOrId.iconicPrimeProfileId]
     : undefined;

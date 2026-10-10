@@ -3,7 +3,7 @@ import { getMatchContext, useGameStore } from "@/store/gameStore";
 import { buildInstructionRoster, instructionContextFingerprint } from "@/engine/directives";
 import { defaultOpponentPlayerPlan } from "@/engine/matchPlan";
 import { LEAGUES_DATA, slugify } from "@/database/leagueGenerator";
-import { Difficulty, type MatchResult, type MatchStats, type PlayerMatchAnalysis } from "@/types";
+import { Difficulty, GameMode, type MatchResult, type MatchStats, type PlayerMatchAnalysis } from "@/types";
 
 function emptyStats(): MatchStats {
   return {
@@ -74,6 +74,9 @@ describe("core game loop (integration)", () => {
     const save = store().save;
     expect(save).toBeTruthy();
     expect(save!.userClubId).toBe(clubId);
+    expect(save!.gameMode).toBe(GameMode.Modern);
+    expect(Object.values(save!.world.players).some((player) => player.modernPlayerIdentityId)).toBe(true);
+    expect(Object.values(save!.world.players).some((player) => player.iconicPrimeProfileId)).toBe(false);
     expect(Object.keys(save!.world.leagues)).toHaveLength(20);
     expect(Object.keys(save!.world.clubs)).toHaveLength(400);
     expect(Object.keys(save!.world.players).length).toBeGreaterThan(5000);
@@ -435,6 +438,7 @@ describe("core game loop (integration)", () => {
     expect(guard).toBeLessThan(400);
 
     const after = store().save!;
+    expect(after.gameMode).toBe(GameMode.Modern);
     expect(after.season.seasonYear).toBe(2027);
     expect(after.season.currentWeek).toBe(1);
     expect(after.season.transferWindowOpen).toBe(true);
@@ -469,4 +473,29 @@ describe("core game loop (integration)", () => {
     expect(after.world.players[samplePlayerId].age).toBe(sampleAgeBefore + 1);
     expect(after.world.players[samplePlayerId].seasonStats.appearances).toBe(0);
   }, 120_000);
+
+  it("persists an explicit Iconic Prime career and safely migrates a pre-mode save", async () => {
+    const league = LEAGUES_DATA.find((candidate) => candidate.nation === "Bretherland" && candidate.tier === 1)!;
+    const leagueId = slugify(league.name);
+    const clubId = slugify(league.clubs[0]);
+
+    await useGameStore.getState().newCareer({
+      managerName: "Prime Manager",
+      managerNationality: "Valdoria",
+      difficulty: Difficulty.WorldClass,
+      gameMode: GameMode.Iconic,
+      leagueId,
+      clubId,
+    });
+
+    const iconicSave = useGameStore.getState().save!;
+    expect(iconicSave.gameMode).toBe(GameMode.Iconic);
+    expect(Object.values(iconicSave.world.players).filter((player) => player.iconicPrimeProfileId)).toHaveLength(109);
+    expect(Object.values(iconicSave.world.players).some((player) => player.modernPlayerIdentityId)).toBe(false);
+
+    const legacySave = structuredClone(iconicSave);
+    delete legacySave.gameMode;
+    await useGameStore.getState().replaceSave(legacySave);
+    expect(useGameStore.getState().save!.gameMode).toBe(GameMode.Iconic);
+  }, 60_000);
 });

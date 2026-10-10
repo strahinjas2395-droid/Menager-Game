@@ -3,11 +3,12 @@
  * 15 nations; Bretherland, Valdoria, Schwarzland, Campoverde and
  * Hellenia have a second division (promotion/relegation pairs).
  */
-import { ManagerPersonality, PlayStyle, type Club, type League, type Manager, type Player } from "@/types";
+import { GameMode, ManagerPersonality, PlayStyle, type Club, type League, type Manager, type Player } from "@/types";
 import { SeededRNG, clamp } from "@/database/rng";
 import { NAME_POOLS, NATIONALITY_FLAGS, generateName } from "@/database/nameGenerator";
 import { generateSquad } from "@/database/playerGenerator";
 import { applyIconicPlayerAliases, clubIdentityNames } from "@/database/footballIdentities";
+import { applyModernPlayerAliases } from "@/database/modernFootballIdentities";
 
 interface LeagueDef {
   name: string;
@@ -250,7 +251,7 @@ export interface GeneratedWorld {
  * Generate the complete fictional football world from a seed.
  * Deterministic: same seed -> identical world.
  */
-export function generateAllLeagues(seed: number): GeneratedWorld {
+export function generateAllLeagues(seed: number, gameMode: GameMode = GameMode.Iconic): GeneratedWorld {
   const rng = new SeededRNG(seed);
   const leagues: League[] = [];
   const clubs: Club[] = [];
@@ -350,7 +351,8 @@ export function generateAllLeagues(seed: number): GeneratedWorld {
       const leagueLevel = rank + (def.tier === 2 ? 12 : 0) + (def.reputation < 78 ? 6 : 0);
       const squadSeed = (seed ^ hashStr(clubId)) >>> 0;
       const squad = generateSquad(clubId, leagueLevel, def.nation, new SeededRNG(squadSeed), squadSeed);
-      applyIconicPlayerAliases(clubName, squad);
+      if (gameMode === GameMode.Iconic) applyIconicPlayerAliases(clubName, squad);
+      else applyModernPlayerAliases(clubName, squad);
       const wageScale = def.reputation / 82;
       for (const p of squad) {
         p.id = uniqueId(p.id);

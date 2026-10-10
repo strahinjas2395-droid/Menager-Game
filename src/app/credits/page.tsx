@@ -16,7 +16,12 @@ export default function CreditsPage() {
         <div className="mx-auto mt-8 max-w-md space-y-4 text-left text-sm leading-relaxed text-white/70">
           <p>
             20 fictional nations, 20 leagues, 400 clubs and a fully generated world of
-            ~10,000 players — every name invented for this universe.
+            ~10,000 players — every name transformed or invented for this universe.
+          </p>
+          <p>
+            Choose Current Era, a stable 2026-era offline snapshot of active-player-inspired
+            identities, or the special Iconic Prime database of mixed-era legends at their peak.
+            These fictionalised databases are not live or licensed rosters.
           </p>
           <p>
             Features: live dot-view matches with a seeded simulation engine, 32 formations,

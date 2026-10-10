@@ -7,6 +7,7 @@ import { create } from "zustand";
 import {
   CompetitionType,
   Difficulty,
+  GameMode,
   MatchEventType,
   MentalityLevel,
   PlayStyle,
@@ -157,6 +158,7 @@ interface GameState {
     managerName: string;
     managerNationality: string;
     difficulty: Difficulty;
+    gameMode?: GameMode;
     leagueId: string;
     clubId: string;
   }) => Promise<void>;
@@ -339,7 +341,8 @@ export const useGameStore = create<GameState>((set, get) => {
 
     newCareer: async (params) => {
       const seed = randomSeed();
-      const gen = generateAllLeagues(seed);
+      const gameMode = params.gameMode ?? GameMode.Modern;
+      const gen = generateAllLeagues(seed, gameMode);
       const world = buildWorldFromGeneration(gen);
       const club = world.clubs[params.clubId];
       if (!club) throw new Error("Club not found");
@@ -351,6 +354,7 @@ export const useGameStore = create<GameState>((set, get) => {
       const save: GameSave = {
         version: SAVE_VERSION,
         seed,
+        gameMode,
         managerName: params.managerName,
         managerNationality: params.managerNationality,
         difficulty: params.difficulty,
@@ -391,6 +395,8 @@ export const useGameStore = create<GameState>((set, get) => {
     continueCareer: async () => {
       const existing = await loadGame();
       if (existing) {
+        // Careers created before selectable databases used the mixed-era layer.
+        existing.gameMode ??= GameMode.Iconic;
         existing.opponentPlans ??= {};
         existing.managerMemories ??= {};
         existing.trainingPlan ??= defaultTrainingPlan();
@@ -665,6 +671,7 @@ export const useGameStore = create<GameState>((set, get) => {
     },
 
     replaceSave: async (save) => {
+      save.gameMode ??= GameMode.Iconic;
       save.trainingPlan ??= defaultTrainingPlan();
       save.trainingHistory ??= [];
       normalizeWorldFitness(save.world);

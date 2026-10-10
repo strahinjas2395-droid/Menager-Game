@@ -178,7 +178,7 @@ export interface IconicPlayerAlias {
   firstName: string;
   lastName: string;
   position: PrimaryPosition;
-  playstyles?: PlaystyleTag[];
+  playstyles?: readonly PlaystyleTag[];
 }
 
 /**
@@ -447,14 +447,15 @@ function positionalScore(player: Player, position: PrimaryPosition): number {
 }
 
 /**
- * Applies the transformed identity and its deterministic prime-era mechanical
- * profile. Stable ids and contracts are preserved; no aggregate rating exists.
+ * Position-safe deterministic alias assignment shared by the two databases.
+ * A callback may add mode-specific metadata, but ids and contracts are retained.
  */
-export function applyIconicPlayerAliases(clubName: string, squad: Player[]): Player[] {
-  const aliases = ICONIC_PLAYER_ALIASES[clubName];
-  if (!aliases?.length) return squad;
+export function assignCompatiblePlayerAliases<TAlias extends IconicPlayerAlias>(
+  squad: Player[],
+  aliases: readonly TAlias[],
+  onAssigned?: (player: Player, alias: TAlias) => void,
+): Player[] {
   const available = new Set(squad.map((_, index) => index));
-
   for (const alias of aliases) {
     const compatible = [...available].filter((index) =>
       squad[index].primaryPosition === alias.position || squad[index].secondaryPositions.includes(alias.position),
@@ -469,14 +470,27 @@ export function applyIconicPlayerAliases(clubName: string, squad: Player[]): Pla
     const selected = squad[candidate.index];
     selected.firstName = alias.firstName;
     selected.lastName = alias.lastName;
-    const transformedName = `${alias.firstName} ${alias.lastName}`;
-    const primeProfile = getIconicPrimeProfileByAlias(transformedName);
-    if (!primeProfile) throw new Error(`Missing iconic prime profile for ${transformedName}.`);
-    applyIconicPrimeProfile(selected, primeProfile);
+    onAssigned?.(selected, alias);
     if (alias.playstyles?.length) {
       selected.playstyles = [...new Set([...alias.playstyles, ...selected.playstyles])].slice(0, 3);
     }
     available.delete(candidate.index);
   }
   return squad;
+}
+
+/**
+ * Applies the transformed identity and its deterministic prime-era mechanical
+ * profile. Stable ids and contracts are preserved; no aggregate rating exists.
+ */
+export function applyIconicPlayerAliases(clubName: string, squad: Player[]): Player[] {
+  const aliases = ICONIC_PLAYER_ALIASES[clubName];
+  if (!aliases?.length) return squad;
+  return assignCompatiblePlayerAliases(squad, aliases, (selected, alias) => {
+    const transformedName = `${alias.firstName} ${alias.lastName}`;
+    const primeProfile = getIconicPrimeProfileByAlias(transformedName);
+    if (!primeProfile) throw new Error(`Missing iconic prime profile for ${transformedName}.`);
+    selected.modernPlayerIdentityId = undefined;
+    applyIconicPrimeProfile(selected, primeProfile);
+  });
 }

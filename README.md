@@ -24,10 +24,18 @@ npm run build      # production build
 
 ## The game
 
-- **20 leagues across 15 nations** (5 nations have two divisions with promotion/relegation),
-  400 recognisable fictional clubs, and ~10,000 generated players. Exactly 109 position-compatible
-  mixed-era iconic aliases receive explicit prime-era mechanical profiles — all deterministic from
-  a seed.
+- **Two selectable career databases** are available directly from the main menu. Both retain the
+  same deterministic 20-league, 15-nation, 400-club world (including promotion/relegation) and
+  ~10,000 generated players, but their featured identity layers are intentionally separate:
+  - **Current Era** is the default career mode, with 134 unique, position-compatible transformed
+    identities inspired by active players across 60 contemporary clubs. It is a curated, stable
+    2026-era offline snapshot rather than a live or licensed roster, so real-world transfers after
+    the snapshot are not applied automatically.
+  - **Iconic Prime** is a clearly labelled special mode with exactly 109 position-compatible,
+    mixed-era iconic aliases and their researched peak-period mechanics. Retired legends never
+    enter Current Era, and contemporary identities cannot inherit an iconic profile.
+  The selected mode is shown in career setup and the in-career header, stored in exports and saves,
+  and restored when continuing. Saves created before mode selection existed migrate to Iconic Prime.
 - **42-week season**: 38 double round-robin league weeks, domestic cup rounds
   (weeks 7/14/21/28/35), an 8-group continental championship with single-leg knockouts
   (weeks 30/33/36/40), and transfer windows in weeks 1–4 and 19–22.

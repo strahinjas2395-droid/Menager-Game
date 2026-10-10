@@ -1,5 +1,6 @@
 "use client";
 
+import { GameMode } from "@/types";
 import { useGameStore } from "@/store/gameStore";
 import { NATIONALITY_FLAGS } from "@/database/nameGenerator";
 
@@ -20,6 +21,15 @@ export default function TopBar({ budget = true }: { budget?: boolean }) {
         )}
         <span className="truncate text-sm font-bold text-white">
           {club?.name ?? "No club"}
+        </span>
+        <span
+          className={`shrink-0 rounded px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider ${
+            save.gameMode === GameMode.Modern ? "bg-gold/15 text-gold" : "bg-purple-300/15 text-purple-200"
+          }`}
+          title={save.gameMode === GameMode.Modern ? "Current Era database" : "Iconic Prime database"}
+          aria-label={save.gameMode === GameMode.Modern ? "Current Era database" : "Iconic Prime database"}
+        >
+          {save.gameMode === GameMode.Modern ? "Current" : "Iconic"}
         </span>
         <span className="shrink-0 text-xs text-white/40">
           {flag} S{save.season.seasonYear} · Wk {save.season.currentWeek}/{save.season.totalWeeks}

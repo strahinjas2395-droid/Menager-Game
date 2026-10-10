@@ -1,9 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Star } from "lucide-react";
-import { Difficulty } from "@/types";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useMemo, useState } from "react";
+import { ArrowLeft, ArrowRight, CalendarDays, Check, Crown, Star } from "lucide-react";
+import { Difficulty, GameMode } from "@/types";
 import { LEAGUES_DATA, slugify } from "@/database/leagueGenerator";
 import { NATIONALITIES, NATIONALITY_FLAGS } from "@/database/nameGenerator";
 import { useGameStore } from "@/store/gameStore";
@@ -35,9 +35,20 @@ function Stars({ rep }: { rep: number }) {
   );
 }
 
-export default function NewCareer() {
+export default function NewCareerPage() {
+  return (
+    <Suspense fallback={<main className="flex h-full items-center justify-center bg-navy text-sm text-white/50">Loading career setup…</main>}>
+      <NewCareerSetup />
+    </Suspense>
+  );
+}
+
+function NewCareerSetup() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const newCareer = useGameStore((s) => s.newCareer);
+  const gameMode = searchParams.get("mode") === GameMode.Iconic ? GameMode.Iconic : GameMode.Modern;
+  const iconicMode = gameMode === GameMode.Iconic;
 
   const [step, setStep] = useState<Step>(1);
   const [leagueId, setLeagueId] = useState<string | null>(null);
@@ -73,6 +84,7 @@ export default function NewCareer() {
         managerName: managerName.trim(),
         managerNationality: nationality,
         difficulty,
+        gameMode,
         leagueId,
         clubId,
       });
@@ -96,7 +108,7 @@ export default function NewCareer() {
         </button>
         <div className="flex-1">
           <h1 className="text-sm font-bold uppercase tracking-widest text-gold">
-            New Career
+            {iconicMode ? "Iconic Prime Career" : "Current Era Career"}
           </h1>
           <div className="mt-1 flex gap-1.5">
             {[1, 2, 3, 4].map((n) => (
@@ -111,6 +123,24 @@ export default function NewCareer() {
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 py-5 pb-28">
+        <div className={`mb-4 flex items-center gap-3 rounded-xl border p-3 ${
+          iconicMode ? "border-purple-300/30 bg-purple-500/10" : "border-gold/30 bg-gold/5"
+        }`}>
+          <span className={iconicMode ? "text-purple-200" : "text-gold"}>
+            {iconicMode ? <Crown size={18} /> : <CalendarDays size={18} />}
+          </span>
+          <span>
+            <span className="block text-xs font-black uppercase tracking-wider">
+              {iconicMode ? "Special database · Iconic Prime" : "Contemporary database · Current Era"}
+            </span>
+            <span className="block text-[11px] text-white/50">
+              {iconicMode
+                ? "109 mixed-era aliases use bespoke researched prime mechanics."
+                : "400 contemporary clubs with 134 active-player-inspired marquee identities."}
+            </span>
+          </span>
+        </div>
+
         {step === 1 && (
           <div key="s1" className="animate-slidein">
             <h2 className="mb-3 text-lg font-bold">Choose Your League</h2>
@@ -252,6 +282,7 @@ export default function NewCareer() {
           <div key="s4" className="animate-slidein">
             <h2 className="mb-3 text-lg font-bold">Confirm</h2>
             <div className="card-panel space-y-3 text-sm">
+              <Row label="Database" value={iconicMode ? "Iconic Prime · Special" : "Current Era"} />
               <Row label="League" value={`${selectedLeague?.name ?? ""} (${selectedLeague?.nation ?? ""})`} />
               <Row label="Club" value={selectedClubName ?? ""} />
               <Row label="Manager" value={`${managerName.trim()} (${nationality})`} />
@@ -259,8 +290,9 @@ export default function NewCareer() {
               <Row label="Season" value="2026 · 42 weeks" />
             </div>
             <p className="mt-4 text-xs leading-relaxed text-white/45">
-              You will take charge of your club across league, cup and continental
-              competitions. The board expects results — good luck, gaffer!
+              You will take charge across league, cup and continental competitions using the {iconicMode
+                ? "special mixed-era prime database"
+                : "stable contemporary-era offline database"}. The board expects results — good luck, gaffer!
             </p>
             {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
           </div>

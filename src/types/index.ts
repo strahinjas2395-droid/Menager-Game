@@ -7,6 +7,13 @@
 // Enums
 // ---------------------------------------------------------------------------
 
+export enum GameMode {
+  /** Contemporary clubs with active-player-inspired fictional identities. */
+  Modern = "modern",
+  /** Mixed-era stars restored to researched prime mechanics. */
+  Iconic = "iconic",
+}
+
 export enum PrimaryPosition {
   GK = "GK",
   RB = "RB",
@@ -220,6 +227,8 @@ export interface Player {
   id: string;
   /** Optional engine profile for a transformed prime-era iconic identity. */
   iconicPrimeProfileId?: string;
+  /** Stable transformed identity used by the contemporary database mode. */
+  modernPlayerIdentityId?: string;
   /** Free-text manager note; interpreted to a validated cached tactical plan. */
   individualInstructions?: string;
   firstName: string;
@@ -1027,6 +1036,8 @@ export interface TrainingWeekReport {
 export interface GameSave {
   version: number;
   seed: number;
+  /** Optional only for saves created before selectable databases existed. */
+  gameMode?: GameMode;
   managerName: string;
   managerNationality: string;
   difficulty: Difficulty;
