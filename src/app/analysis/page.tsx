@@ -2,9 +2,10 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, BarChart3, CalendarDays, ChevronRight, Footprints, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, CalendarDays, ChevronRight, Footprints, Target, Users } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import PlayerHeatmap from "@/components/PlayerHeatmap";
+import { summarizeOpponentInstruction } from "@/engine/matchPlan";
 import { useGameStore } from "@/store/gameStore";
 import {
   MATCH_HEATMAP_COLUMNS,
@@ -255,6 +256,13 @@ function MatchView({
             <button onClick={() => onSide("away")} className={`rounded-lg px-2 py-2.5 text-xs font-bold ${side === "away" ? "bg-gold text-navy" : "text-white/55"}`}>{shortName(awayName)}</button>
           </section>
 
+          <OpponentPlanReview
+            result={selected}
+            side={side}
+            teamName={side === "home" ? homeName : awayName}
+            opponentName={side === "home" ? awayName : homeName}
+          />
+
           <section className="card-panel mt-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="stat-label text-gold">Player Reports</span>
@@ -306,6 +314,97 @@ function MatchView({
       )}
     </>
   );
+}
+
+function OpponentPlanReview({
+  result,
+  side,
+  teamName,
+  opponentName,
+}: {
+  result: MatchResult;
+  side: Side;
+  teamName: string;
+  opponentName: string;
+}) {
+  const analysis = result.analysis;
+  const plan = analysis?.opponentPlans?.[side];
+  const versions = analysis?.opponentPlanChanges?.filter((change) => change.side === side) ?? [];
+  if (!analysis || !plan) return null;
+  const usedByTarget = new Map<string, (typeof plan.instructions)[number]>();
+  for (const version of versions) {
+    for (const instruction of version.plan.instructions) usedByTarget.set(instruction.targetPlayerId, instruction);
+  }
+  for (const instruction of plan.instructions) usedByTarget.set(instruction.targetPlayerId, instruction);
+  const usedInstructions = [...usedByTarget.values()];
+  return (
+    <section className="card-panel mt-3 border-gold/20">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-gold"><Target size={15} /><span className="stat-label text-gold">Opponent Plan Review</span></div>
+          <p className="mt-1 text-[10px] text-white/45">{shortName(teamName)} assignments against {shortName(opponentName)} · {plan.source === "ai" ? "AI coach" : "your bench"}</p>
+        </div>
+        <span className="rounded-full bg-gold/10 px-2 py-1 text-[9px] font-bold text-gold">
+          {usedInstructions.length} targets used{versions.length > 1 ? ` · ${versions.length} versions` : ""}
+        </span>
+      </div>
+      {versions.length > 1 && (
+        <details className="mt-3 rounded-lg border border-white/10 bg-navy/50 p-2">
+          <summary className="cursor-pointer text-[9px] font-bold uppercase tracking-wide text-white/50">Plan changes used during the match</summary>
+          <div className="mt-2 space-y-1.5">
+            {versions.map((version, index) => (
+              <div key={`${version.minute}-${index}`} className="grid grid-cols-[34px_1fr] gap-2 text-[9px]">
+                <b className="text-right text-gold">{version.minute}&apos;</b>
+                <span className="text-white/50">
+                  {version.plan.instructions.length
+                    ? version.plan.instructions.map((instruction) => `${instruction.targetPlayerName}: ${summarizeOpponentInstruction(instruction).join(", ")}`).join(" · ")
+                    : "No opponent-specific assignments"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+      <div className="mt-3 space-y-2">
+        {usedInstructions.length ? usedInstructions.map((instruction) => {
+          const target = analysis.players[instruction.targetPlayerId];
+          const marker = instruction.markerPlayerId ? analysis.players[instruction.markerPlayerId] : undefined;
+          return (
+            <article key={instruction.targetPlayerId} className="rounded-lg bg-navy/60 p-2.5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-xs font-black">{instruction.targetPlayerName}</div>
+                  <div className="mt-0.5 text-[9px] text-gold/75">{summarizeOpponentInstruction(instruction).join(" · ")}</div>
+                </div>
+                {target && <span className="rounded bg-white/[0.07] px-1.5 py-1 text-[10px] font-black text-gold">{target.rating.toFixed(1)}</span>}
+              </div>
+              {target ? (
+                <div className="mt-2 grid grid-cols-3 gap-1.5 sm:grid-cols-6">
+                  <PlanOutcome label="Touches" value={target.touches} />
+                  <PlanOutcome label="Poss. lost" value={target.possessionLost} />
+                  <PlanOutcome label="Passes" value={`${target.passesCompleted}/${target.passesAttempted}`} />
+                  <PlanOutcome label="Dribbles" value={`${target.dribblesCompleted}/${target.dribblesAttempted}`} />
+                  <PlanOutcome label="Crosses" value={`${target.crossesCompleted}/${target.crossesAttempted}`} />
+                  <PlanOutcome label="G + A" value={`${target.goals} + ${target.assists}`} />
+                </div>
+              ) : <p className="mt-2 text-[9px] text-white/35">The targeted player did not record an appearance.</p>}
+              {marker && (
+                <p className="mt-2 text-[9px] text-white/45">
+                  Marker outcome: <b className="text-white/70">{marker.playerName}</b> · {marker.tacklesWon}/{marker.tacklesAttempted} tackles · {marker.interceptions} interceptions · {marker.foulsCommitted} fouls
+                </p>
+              )}
+            </article>
+          );
+        }) : (
+          <p className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[10px] text-white/35">No opponent-specific assignments were used by this side.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function PlanOutcome({ label, value }: { label: string; value: string | number }) {
+  return <div className="rounded-md bg-card px-1.5 py-1.5 text-center"><div className="text-[11px] font-black tabular-nums">{value}</div><div className="text-[7px] uppercase tracking-wide text-white/35">{label}</div></div>;
 }
 
 function PlayerDetail({ player }: { player: PlayerMatchAnalysis }) {

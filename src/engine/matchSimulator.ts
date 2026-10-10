@@ -20,7 +20,11 @@ import {
   DefensiveLine,
   type MatchAnalysis,
   type MatchEvent,
+  type MatchPlanAttackApproach,
   type MatchStats,
+  type OpponentMatchPlan,
+  type OpponentPlanChangeRecord,
+  type OpponentPlayerPlan,
   type Player,
   type PlayerMatchAnalysis,
   type TacticalChangeRecord,
@@ -40,6 +44,7 @@ import {
 } from "@/engine/actionResolver";
 import { getFormation, mirrorFormation } from "@/engine/formations";
 import { mergeDirectives, type PlayerDirectives } from "@/engine/directives";
+import { buildAIOpponentMatchPlan, sanitizeOpponentMatchPlan } from "@/engine/matchPlan";
 import {
   chooseSpatialTarget,
   hasPlaystyle,
@@ -80,6 +85,8 @@ export interface TeamSide {
     tacticalFlexibility: number;
     reputation: number;
   };
+  /** Fixture-specific instructions against exact opposition players. */
+  opponentPlan?: OpponentMatchPlan;
   /** Parsed team-wide natural-language instruction. */
   teamDirectives?: PlayerDirectives;
   /** Parsed individual/assigned instructions, keyed by playerId (user team only). */
@@ -88,6 +95,7 @@ export interface TeamSide {
 
 export interface SimOptions {
   seed: number;
+  fixtureId?: string;
   /** Career difficulty controls opposition observation, reaction and decision quality. */
   difficulty?: Difficulty;
   /** match-clock seconds advanced per real second at speed 1 (default 6 => 90' in 15 min) */
@@ -451,6 +459,9 @@ export class MatchSimulator {
   private telemetry = new Map<string, PlayerTelemetryRuntime>();
   private nextHeatmapSampleAt = 0;
   private tacticalChanges: TacticalChangeRecord[] = [];
+  private opponentPlans: Partial<Record<Side, OpponentMatchPlan>> = {};
+  private opponentPlanChanges: OpponentPlanChangeRecord[] = [];
+  private readonly fixtureId: string;
   private readonly initialFormations: Record<Side, string>;
   /** Match-clock timestamp for throttled, inspectable instruction commentary. */
   private instructionCommentaryAt = new Map<string, number>();
@@ -488,6 +499,33 @@ export class MatchSimulator {
     this.awayPlayers = this.buildPlayers(away);
     this.homePlayers.forEach((sp) => this.createTelemetry("home", sp, true));
     this.awayPlayers.forEach((sp) => this.createTelemetry("away", sp, true));
+    this.fixtureId = options.fixtureId ?? home.opponentPlan?.fixtureId ?? away.opponentPlan?.fixtureId ?? `match-${options.seed}`;
+    for (const side of ["home", "away"] as Side[]) {
+      const team = this.team(side);
+      const opposition = this.team(this.other(side));
+      this.opponentPlans[side] = team.isUserTeam
+        ? sanitizeOpponentMatchPlan(
+            team.opponentPlan,
+            this.fixtureId,
+            [...team.starters, ...team.bench],
+            [...opposition.starters, ...opposition.bench],
+            "user",
+          )
+        : buildAIOpponentMatchPlan(
+            this.fixtureId,
+            team.starters.map((player, index) => ({ player, role: team.roles[index] ?? player.primaryPosition })),
+            opposition.starters.map((player, index) => ({ player, role: opposition.roles[index] ?? player.primaryPosition })),
+            this.difficulty,
+          );
+      const initialPlan = this.opponentPlans[side];
+      if (initialPlan) {
+        this.opponentPlanChanges.push({
+          side,
+          minute: 0,
+          plan: { ...initialPlan, instructions: initialPlan.instructions.map((instruction) => ({ ...instruction })) },
+        });
+      }
+    }
     if (!home.isUserTeam) this.aiNextReview.home = this.coachProfile.firstReviewMinute;
     if (!away.isUserTeam) this.aiNextReview.away = this.coachProfile.firstReviewMinute;
 
@@ -655,6 +693,18 @@ export class MatchSimulator {
       finalAwayFormation: this.away.tactics.formation,
       players,
       tacticalChanges: this.tacticalChanges.map((change) => ({ ...change, changes: [...change.changes] })),
+      opponentPlans: {
+        home: this.opponentPlans.home
+          ? { ...this.opponentPlans.home, instructions: this.opponentPlans.home.instructions.map((instruction) => ({ ...instruction })) }
+          : undefined,
+        away: this.opponentPlans.away
+          ? { ...this.opponentPlans.away, instructions: this.opponentPlans.away.instructions.map((instruction) => ({ ...instruction })) }
+          : undefined,
+      },
+      opponentPlanChanges: this.opponentPlanChanges.map((change) => ({
+        ...change,
+        plan: { ...change.plan, instructions: change.plan.instructions.map((instruction) => ({ ...instruction })) },
+      })),
     };
   }
 
@@ -767,6 +817,72 @@ export class MatchSimulator {
       });
     }
     this.pendingState = true;
+  }
+
+  /** Apply an exact-opponent match plan immediately during a live match. */
+  updateOpponentPlan(side: Side, plan: OpponentMatchPlan): void {
+    const team = this.team(side);
+    const opposition = this.team(this.other(side));
+    const previous = this.opponentPlans[side];
+    const before = previous?.instructions ?? [];
+    const sanitized = sanitizeOpponentMatchPlan(
+      plan,
+      this.fixtureId,
+      [...team.starters, ...team.bench],
+      [...opposition.starters, ...opposition.bench],
+      team.isUserTeam ? "user" : "ai",
+    );
+    if (previous && JSON.stringify(previous.instructions) === JSON.stringify(sanitized.instructions)) return;
+    this.opponentPlans[side] = sanitized;
+    const minute = Math.floor(this.gameTime / 60);
+    this.opponentPlanChanges.push({
+      side,
+      minute,
+      plan: { ...sanitized, instructions: sanitized.instructions.map((instruction) => ({ ...instruction })) },
+    });
+    this.tacticalChanges.push({
+      side,
+      clubId: team.clubId,
+      minute,
+      source: team.isUserTeam ? "user" : "ai",
+      reason: "Opponent-specific match plan updated",
+      formationBefore: team.tactics.formation,
+      formationAfter: team.tactics.formation,
+      changes: [
+        `${before.length} → ${sanitized.instructions.length} targeted assignments`,
+        ...sanitized.instructions.slice(0, 3).map((instruction) => `Plan against ${instruction.targetPlayerName}`),
+      ],
+    });
+    this.pendingState = true;
+  }
+
+  private planAgainst(side: Side, targetPlayerId: string | undefined): OpponentPlayerPlan | undefined {
+    return targetPlayerId
+      ? this.opponentPlans[side]?.instructions.find((instruction) => instruction.targetPlayerId === targetPlayerId)
+      : undefined;
+  }
+
+  private planForMarker(side: Side, markerPlayerId: string): OpponentPlayerPlan | undefined {
+    return this.opponentPlans[side]?.instructions.find((instruction) => instruction.markerPlayerId === markerPlayerId);
+  }
+
+  private attackingPlanNear(
+    side: Side,
+    x: number,
+    y: number,
+    approaches?: readonly MatchPlanAttackApproach[],
+  ): { instruction: OpponentPlayerPlan; target: SimPlayer; distance: number } | undefined {
+    let best: { instruction: OpponentPlayerPlan; target: SimPlayer; distance: number } | undefined;
+    for (const instruction of this.opponentPlans[side]?.instructions ?? []) {
+      if (instruction.attackApproach === "none" || (approaches && !approaches.includes(instruction.attackApproach))) continue;
+      const target = this.players(this.other(side)).find(
+        (opponent) => opponent.p.id === instruction.targetPlayerId && !opponent.sentOff,
+      );
+      if (!target) continue;
+      const distance = Math.hypot(target.x - x, target.y - y);
+      if (!best || distance < best.distance) best = { instruction, target, distance };
+    }
+    return best;
   }
 
   /** Update validated natural-language plans during a live match. */
@@ -1034,6 +1150,11 @@ export class MatchSimulator {
       benchPlayer.id,
       `${team.shortName}: ${benchPlayer.firstName} ${benchPlayer.lastName} is on`,
     );
+    // An AI coach reassigns exact markers/targets when either lineup changes;
+    // it uses the same validated plan path as the live user controls.
+    for (const coachSide of [side, this.other(side)] as Side[]) {
+      if (!this.team(coachSide).isUserTeam) this.refreshAIOpponentPlan(coachSide);
+    }
     this.pendingState = true;
     return true;
   }
@@ -1219,7 +1340,22 @@ export class MatchSimulator {
           });
         const threats = brainOpponents.filter((op) => op.role !== "GK");
         const assigned = new Set<string>();
+        const assignedMarkers = new Set<string>();
+
+        // Exact user/AI match-plan jobs are allocated first. Generic zonal
+        // assignments then fill the remaining players and threats around them.
+        for (const instruction of this.opponentPlans[side]?.instructions ?? []) {
+          if (!instruction.markerPlayerId) continue;
+          const marker = markers.find((candidate) => candidate.p.id === instruction.markerPlayerId);
+          const target = threats.find((candidate) => candidate.id === instruction.targetPlayerId);
+          if (!marker || !target) continue;
+          markAssignments.set(marker.p.id, target);
+          assigned.add(target.id);
+          assignedMarkers.add(marker.p.id);
+        }
+
         for (const marker of markers) {
+          if (assignedMarkers.has(marker.p.id)) continue;
           const available = threats.filter((threat) => !assigned.has(threat.id));
           const pool = available.length > 0 ? available : threats;
           const target = [...pool].sort((a, b) => {
@@ -1238,6 +1374,17 @@ export class MatchSimulator {
       const active = players
         .map((sp, i) => ({ sp, i, d: Math.hypot(sp.x - this.ball.x, sp.y - this.ball.y) }))
         .filter((o) => !o.sp.sentOff && o.sp.role !== "GK");
+      const oppositionCarrier = this.carrier?.side === this.other(side)
+        ? this.players(this.other(side))[this.carrier.i]
+        : undefined;
+      const receptionPlan = this.planAgainst(side, oppositionCarrier?.p.id);
+      const planPressAdjustment = (candidate: SimPlayer): number => {
+        if (!receptionPlan) return 0;
+        if (receptionPlan.pressing === "standOff") return 240;
+        if (receptionPlan.pressing !== "pressOnReceive") return 0;
+        if (candidate.p.id === receptionPlan.markerPlayerId) return -190;
+        return receptionPlan.doubleTeam ? -105 : receptionPlan.markerPlayerId ? 45 : -80;
+      };
       const pressOrder = [...active].sort((a, b) => {
         const aDirective = this.directives(side, a.sp);
         const bDirective = this.directives(side, b.sp);
@@ -1245,8 +1392,10 @@ export class MatchSimulator {
           hasPlaystyle(a.sp.p, PlaystyleTag.BallWinner) ? 35 : 0;
         const bTrait = hasPlaystyle(b.sp.p, PlaystyleTag.PressingForward) ? 90 :
           hasPlaystyle(b.sp.p, PlaystyleTag.BallWinner) ? 35 : 0;
-        const ad = a.d - (aDirective.pressHard ? 120 : aDirective.defensiveDuty ? 65 : 0) - aTrait + (aDirective.pressLess ? 240 : 0);
-        const bd = b.d - (bDirective.pressHard ? 120 : bDirective.defensiveDuty ? 65 : 0) - bTrait + (bDirective.pressLess ? 240 : 0);
+        const ad = a.d - (aDirective.pressHard ? 120 : aDirective.defensiveDuty ? 65 : 0) - aTrait +
+          (aDirective.pressLess ? 240 : 0) + planPressAdjustment(a.sp);
+        const bd = b.d - (bDirective.pressHard ? 120 : bDirective.defensiveDuty ? 65 : 0) - bTrait +
+          (bDirective.pressLess ? 240 : 0) + planPressAdjustment(b.sp);
         return ad - bd;
       });
       // One player engages and, at high intensity, one supports. Team-wide
@@ -1258,6 +1407,11 @@ export class MatchSimulator {
         : pressing >= PressingIntensity.High || gegen || justLost
           ? 2
           : 1;
+      if (receptionPlan?.pressing === "pressOnReceive") {
+        pressCount = receptionPlan.doubleTeam ? 2 : Math.max(1, pressCount);
+      } else if (receptionPlan?.pressing === "standOff") {
+        pressCount = 0;
+      }
       pressCount = Math.min(2, pressCount);
       const pressers = new Set(pressOrder.slice(0, pressCount).map((o) => o.i));
 
@@ -1306,6 +1460,14 @@ export class MatchSimulator {
             const upper = this.opponentsWithin(side, sp.x + dir * 50, sp.y - 55, 9);
             const lower = this.opponentsWithin(side, sp.x + dir * 50, sp.y + 55, 9);
             sp.ty = clamp(sp.y + (upper < lower ? -28 : upper > lower ? 28 : 0), 18, 632);
+          }
+
+          const carrierTargeting = this.attackingPlanNear(side, sp.x, sp.y, ["pace", "dribble"]);
+          if (carrierTargeting && sp.role !== "GK" && carrierTargeting.distance < 210) {
+            const { instruction, target } = carrierTargeting;
+            sp.tx = clamp(target.x + dir * (instruction.attackApproach === "pace" ? 78 : 34), 20, 980);
+            sp.ty = clamp(target.y + (sp.y <= target.y ? -22 : 22), 18, 632);
+            sp.runUntil = Math.max(sp.runUntil, this.worldTime + (instruction.attackApproach === "pace" ? 1.05 : 0.72));
           }
 
           const closest = pressure > 0.2 ? this.closestOpponent(side, sp) : null;
@@ -1481,6 +1643,24 @@ export class MatchSimulator {
           tx += dir * Math.cos(this.worldTime * 0.37 + i) * (directive.roam ? 30 : 14);
         }
 
+        const channelTargeting = this.attackingPlanNear(side, sp.x, sp.y);
+        if (hasBall && channelTargeting && !directive.defensiveDuty) {
+          const { instruction: channelPlan, target: channelTarget } = channelTargeting;
+          if (channelPlan.attackApproach === "pace" && (isForward || isWide)) {
+            tx = dir > 0 ? Math.max(tx, channelTarget.x + 72) : Math.min(tx, channelTarget.x - 72);
+            ty = ty * 0.36 + (channelTarget.y + (i % 2 === 0 ? -24 : 24)) * 0.64;
+          } else if (channelPlan.attackApproach === "aerial") {
+            if (isWide) ty = base.y < 325 ? Math.min(ty, 58) : Math.max(ty, 592);
+            if (["ST", "CF", "CAM"].includes(sp.role)) {
+              tx = tx * 0.45 + (channelTarget.x + dir * 32) * 0.55;
+              ty = ty * 0.4 + channelTarget.y * 0.6;
+            }
+          } else if (channelPlan.attackApproach === "dribble" && isWide) {
+            ty = ty * 0.42 + channelTarget.y * 0.58;
+            tx += dir * 38;
+          }
+        }
+
         // Hold-position is deliberately strong: keep the player's formation
         // anchor, only sliding with the ball as a connected block.
         if (directive.holdPosition) {
@@ -1503,6 +1683,40 @@ export class MatchSimulator {
               ty = ty * 0.3 + mark.y * 0.7;
             }
           }
+        }
+
+        // A named marking job is a physical approach angle, not a hidden
+        // debuff. The marker still has to accelerate, keep up and win a duel.
+        const exactMarkingPlan = this.planForMarker(side, sp.p.id);
+        const assignedTarget = markAssignments.get(sp.p.id);
+        const assignedTargetPlan = assignedTarget ? this.planAgainst(side, assignedTarget.id) : undefined;
+        const markingPlan = exactMarkingPlan ?? (
+          assignedTargetPlan && (
+            assignedTargetPlan.tightMarking || assignedTargetPlan.showOnto !== "normal" || assignedTargetPlan.preventCrosses
+          ) ? assignedTargetPlan : undefined
+        );
+        const plannedTarget = markingPlan
+          ? this.players(this.other(side)).find((opponent) => opponent.p.id === markingPlan.targetPlayerId && !opponent.sentOff)
+          : undefined;
+        if (!hasBall && markingPlan && plannedTarget) {
+          const towardCentre = Math.sign(325 - plannedTarget.y) || 1;
+          const distance = markingPlan.tightMarking ? 17 : 29;
+          let plannedY = plannedTarget.y;
+          if (markingPlan.showOnto === "outside") plannedY += towardCentre * 19;
+          if (markingPlan.showOnto === "inside") plannedY -= towardCentre * 19;
+          if (markingPlan.showOnto === "weakFoot") {
+            // Occupy the preferred-foot shoulder, making the weaker-foot route
+            // the path of least resistance.
+            plannedY += plannedTarget.p.preferredFoot === "Right" ? -18 : 18;
+          }
+          // Cross denial closes the touchline shoulder rather than applying a
+          // statistical crossing penalty to the winger.
+          if (markingPlan.preventCrosses) plannedY -= towardCentre * 22;
+          const plannedX = plannedTarget.x - dir * distance;
+          const weight = markingPlan.tightMarking ? 0.86 : 0.68;
+          tx = tx * (1 - weight) + plannedX * weight;
+          ty = ty * (1 - weight) + plannedY * weight;
+          sp.intent = "mark";
         }
 
         // Defensive actions: a designated set presses; everyone else protects
@@ -1817,6 +2031,10 @@ export class MatchSimulator {
     const behavior = styleBehavior(style);
     const pressure = this.pressureOn(side, idx);
     const distanceFromOwnGoal = Math.abs(sp.x - this.ownGoalX(side));
+    const nearbyAttackTargeting = this.attackingPlanNear(side, sp.x, sp.y);
+    const nearbyAttackPlan = nearbyAttackTargeting && nearbyAttackTargeting.distance < 165
+      ? nearbyAttackTargeting.instruction
+      : undefined;
 
     // An urgent-clearance plan has priority over style and role, but only in a
     // credible danger zone. Reception itself removes the cooldown, so this is
@@ -1854,7 +2072,8 @@ export class MatchSimulator {
       const cutbackTalent = hasPlaystyle(sp.p, PlaystyleTag.CutbackSpecialist);
       const cutback = nearByline && this.rng.chance(cutbackTalent ? 0.9 : 0.68);
       const crossTrait = hasPlaystyle(sp.p, PlaystyleTag.Crosser) ? 0.14 : 0;
-      if (this.rng.chance(clamp((crossBase + sp.p.crossing * 0.006 + crossTrait) * behavior.crossing, 0.025, 0.82))) {
+      const plannedAerialAttack = nearbyAttackPlan?.attackApproach === "aerial" ? 0.2 : 0;
+      if (this.rng.chance(clamp((crossBase + sp.p.crossing * 0.006 + crossTrait + plannedAerialAttack) * behavior.crossing, 0.025, 0.86))) {
         this.executeCross(side, sp, cutback);
         return;
       }
@@ -1891,11 +2110,13 @@ export class MatchSimulator {
     const channelOpen = this.opponentsWithin(side, channelX, sp.y, 8.5) === 0;
     const paceAbuser = hasPlaystyle(sp.p, PlaystyleTag.PaceAbuser);
     const carryQuality = (sp.p.dribbling + sp.p.ballControl + sp.p.decisions) / 60;
+    const plannedCarry = nearbyAttackPlan?.attackApproach === "pace" ? 0.2 :
+      nearbyAttackPlan?.attackApproach === "dribble" ? 0.16 : 0;
     const carryUrge = clamp(
-      (0.08 + carryQuality * 0.2) * behavior.carryBias + (directive.dribbleMore ? 0.18 : 0) -
+      (0.08 + carryQuality * 0.2) * behavior.carryBias + (directive.dribbleMore ? 0.18 : 0) + plannedCarry -
         (directive.dribbleLess || directive.shortPassing ? 0.13 : 0),
       0.025,
-      0.54,
+      0.7,
     );
     if (
       pressure < 0.38 && channelOpen && distToGoal > 12 &&
@@ -1960,6 +2181,8 @@ export class MatchSimulator {
     // response to pressure. "Release early" strongly suppresses it.
     let dribbleP = (0.1 + sp.p.dribbling * 0.013 + sp.p.flair * 0.005) * behavior.carryBias;
     if (directive.dribbleMore) dribbleP += 0.32;
+    if (nearbyAttackPlan?.attackApproach === "dribble") dribbleP += 0.24;
+    if (nearbyAttackPlan?.attackApproach === "pace") dribbleP += 0.1;
     if (directive.dribbleLess || directive.shortPassing || directive.defensiveDuty) dribbleP *= 0.25;
     if (hasPlaystyle(sp.p, PlaystyleTag.Dribbler)) dribbleP += 0.16;
     if (hasPlaystyle(sp.p, PlaystyleTag.CreativeInsideForward)) dribbleP += 0.1;
@@ -2214,6 +2437,10 @@ export class MatchSimulator {
       if (mate.role === "GK" && !(ownThird && (pressure > 0.42 || style === PlayStyle.PossessionBased))) return;
 
       const receiverDirective = this.directives(side, mate);
+      const receiverTargeting = this.attackingPlanNear(side, mate.x, mate.y);
+      const channelPlan = receiverTargeting && receiverTargeting.distance < 155
+        ? receiverTargeting.instruction
+        : undefined;
       const progressUnits = (mate.x - sp.x) * dir;
       const progressM = progressUnits / UNITS_PER_METER;
       const lane = this.laneSafety(side, sp.x, sp.y, mate.x, mate.y);
@@ -2245,14 +2472,16 @@ export class MatchSimulator {
           style === PlayStyle.DirectCounterAttack ||
           tactics.counterAttack ||
           style === PlayStyle.TotalFootball ||
+          channelPlan?.attackApproach === "pace" ||
           sp.p.creativity + sp.p.decisions > 27) &&
         !this.isOffside(side, mate.x, sp.x);
       if (throughIntent && this.rng.chance(clamp(
         0.002 + sp.p.creativity * 0.0018 + baseProfile.riskTol * 0.035 +
           (behavior.runBehind - 1) * 0.035 +
+          (channelPlan?.attackApproach === "pace" ? 0.13 : 0) +
           (hasPlaystyle(sp.p, PlaystyleTag.ThroughBallSpecialist) ? 0.12 : 0),
         0.015,
-        0.34,
+        0.46,
       ))) {
         // Pass into the runner's future path. Existing velocity matters, so a
         // static target and a player already accelerating receive differently.
@@ -2332,6 +2561,21 @@ export class MatchSimulator {
         if (oppositeFlank) score += 5;
       }
       if (style === PlayStyle.ParkTheBus && !ownThird && progressM < 0) score -= 4;
+
+      // Opponent plans bias real choices rather than editing either player's
+      // attributes. The receiving run still needs a viable lane and remains
+      // subject to interception, control and duel resolution.
+      if (channelPlan?.attackApproach === "pace" && progressM > 3) {
+        score += 10 + Math.max(0, mate.p.pace - 10) * 0.45;
+        if (flavor === "through") score += 8;
+      } else if (channelPlan?.attackApproach === "aerial" && progressM > 0 && distM > 15) {
+        score += 8 + Math.max(0, mate.p.heading - 10) * 0.35;
+        flavor = "lofted";
+        risky = lane < 4.8;
+      } else if (channelPlan?.attackApproach === "dribble" && openness > 4) {
+        score += 5;
+      }
+
       if (flavor === "through") {
         score += 7 + sp.p.creativity * 0.22 +
           (hasPlaystyle(sp.p, PlaystyleTag.ThroughBallSpecialist) ? 11 : 0);
@@ -4010,6 +4254,18 @@ export class MatchSimulator {
   // Adaptive AI manager — observation and reaction quality scale by difficulty
   // -------------------------------------------------------------------------
 
+  private refreshAIOpponentPlan(side: Side): void {
+    const team = this.team(side);
+    if (team.isUserTeam) return;
+    const own = this.players(side)
+      .filter((player) => !player.sentOff)
+      .map((player) => ({ player: player.p, role: player.role }));
+    const opposition = this.players(this.other(side))
+      .filter((player) => !player.sentOff)
+      .map((player) => ({ player: player.p, role: player.role }));
+    this.updateOpponentPlan(side, buildAIOpponentMatchPlan(this.fixtureId, own, opposition, this.difficulty));
+  }
+
   private tickAIManager(): void {
     const minute = Math.floor(this.gameTime / 60);
     for (const side of ["home", "away"] as Side[]) {
@@ -4024,6 +4280,7 @@ export class MatchSimulator {
 
   private applyAIAdjustment(side: Side, minute: number): void {
     const team = this.team(side);
+    this.refreshAIOpponentPlan(side);
     const current = team.tactics;
     const next: TacticalSetup = {
       ...current,

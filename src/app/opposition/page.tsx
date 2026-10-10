@@ -1,13 +1,16 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft, ArrowRight, BrainCircuit, ChartNoAxesCombined, ShieldAlert,
   Sparkles, Swords, UserRoundCog,
 } from "lucide-react";
 import { buildOppositionReport } from "@/engine/oppositionAnalysis";
+import { emptyOpponentMatchPlan } from "@/engine/matchPlan";
+import OpponentPlanEditor from "@/components/OpponentPlanEditor";
 import { getMatchContext, useGameStore } from "@/store/gameStore";
+import type { OpponentMatchPlan } from "@/types";
 
 export default function OppositionPage() {
   return (
@@ -24,14 +27,22 @@ function OppositionScreen() {
   const save = useGameStore((state) => state.save);
   const queue = useGameStore((state) => state.weekQueue);
   const advanceWeek = useGameStore((state) => state.advanceWeek);
+  const updateOpponentPlan = useGameStore((state) => state.updateOpponentPlan);
   const [starting, setStarting] = useState(false);
 
   const context = useMemo(
     () => (save && fixtureId ? getMatchContext(save, fixtureId) : null),
     [save, fixtureId],
   );
+  const [plan, setPlan] = useState<OpponentMatchPlan>(() => {
+    const initialTeam = context ? (context.home.isUserTeam ? context.home : context.away) : null;
+    return initialTeam?.opponentPlan ?? emptyOpponentMatchPlan(fixtureId);
+  });
   const opponentTeam = context
     ? context.home.isUserTeam ? context.away : context.home
+    : null;
+  const userTeam = context
+    ? context.home.isUserTeam ? context.home : context.away
     : null;
   const report = useMemo(
     () => save && context && opponentTeam
@@ -40,7 +51,12 @@ function OppositionScreen() {
     [save, context, opponentTeam],
   );
 
-  if (!save || !context || !opponentTeam || !report) {
+  useEffect(() => {
+    if (!context || !userTeam) return;
+    setPlan(userTeam.opponentPlan ?? emptyOpponentMatchPlan(context.fixture.id));
+  }, [context, userTeam]);
+
+  if (!save || !context || !opponentTeam || !userTeam || !report) {
     return (
       <main className="flex h-full flex-col items-center justify-center gap-4 bg-navy px-6 text-center">
         <p className="text-sm text-white/60">This opposition report is unavailable.</p>
@@ -50,8 +66,31 @@ function OppositionScreen() {
   }
 
   const alreadyQueued = queue.some((fixture) => fixture.id === fixtureId);
-  const enterMatch = () => {
+  const ownPlanPlayers = [
+    ...userTeam.starters.map((player, index) => ({
+      player,
+      role: userTeam.roles[index],
+      shirtNumber: userTeam.displayNumbers[index],
+    })),
+    ...userTeam.bench.map((player) => ({ player, role: player.primaryPosition, shirtNumber: player.shirtNumber })),
+  ];
+  const opponentPlanPlayers = [
+    ...opponentTeam.starters.map((player, index) => ({
+      player,
+      role: opponentTeam.roles[index],
+      shirtNumber: opponentTeam.displayNumbers[index],
+    })),
+    ...opponentTeam.bench.map((player) => ({ player, role: player.primaryPosition, shirtNumber: player.shirtNumber })),
+  ];
+  const changePlan = (next: OpponentMatchPlan) => {
+    setPlan(next);
+    void updateOpponentPlan(context.fixture.id, next);
+  };
+  const enterMatch = async () => {
     setStarting(true);
+    // Flush the final draft before the worker context is built, even if the
+    // manager changed a control and immediately tapped Enter Match.
+    await updateOpponentPlan(context.fixture.id, plan);
     if (alreadyQueued) {
       router.push(`/match?fixture=${fixtureId}`);
       return;
@@ -166,6 +205,19 @@ function OppositionScreen() {
           <ReportList title="Strengths" icon={<Sparkles size={15} />} items={report.strengths} tone="good" />
           <ReportList title="Weaknesses" icon={<ShieldAlert size={15} />} items={report.weaknesses} tone="warn" />
         </section>
+
+        <div className="mt-3">
+          <OpponentPlanEditor
+            plan={plan}
+            ownPlayers={ownPlanPlayers}
+            opponents={opponentPlanPlayers}
+            onChange={changePlan}
+            disabled={context.fixture.played}
+          />
+          {!context.fixture.played && (
+            <p className="mt-1.5 text-right text-[9px] font-semibold text-green-400/70">Saved automatically for this fixture</p>
+          )}
+        </div>
 
         <section className="card-panel mt-3">
           <div className="flex items-center gap-2 text-gold">

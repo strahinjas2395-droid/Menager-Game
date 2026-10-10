@@ -22,6 +22,7 @@ import {
   type League,
   type Manager,
   type MatchResult,
+  type OpponentMatchPlan,
   type Player,
   type TacticalSetup,
 } from "@/types";
@@ -31,6 +32,7 @@ import { generateSeasonFixtures, TOTAL_WEEKS, simulateWeekAI, userFixturesForWee
 import { calculateStandings } from "@/engine/leagueEngine";
 import { buildTeamSide, type TeamSide } from "@/engine/matchSimulator";
 import { buildInstructionRoster, compileInstructionPlans } from "@/engine/directives";
+import { sanitizeOpponentMatchPlan } from "@/engine/matchPlan";
 import { saveGame, loadGame, deleteSave } from "@/database/storage";
 import { aiTransferActivity } from "@/engine/transferEngine";
 import { CONTINENTAL_ID } from "@/engine/continentalEngine";
@@ -151,6 +153,7 @@ interface GameState {
   recordUserMatch: (result: MatchResult) => AdvanceResult;
   updateTactics: (t: TacticalSetup) => Promise<void>;
   updatePlayerInstructions: (instructions: Record<string, string>) => Promise<void>;
+  updateOpponentPlan: (fixtureId: string, plan: OpponentMatchPlan) => Promise<OpponentMatchPlan | null>;
   markAllInboxRead: () => void;
   addMessage: (subject: string, body: string) => void;
   saveNow: () => Promise<void>;
@@ -235,6 +238,9 @@ export const useGameStore = create<GameState>((set, get) => {
         calculateStandings,
       );
       save.world.fixtures = {};
+      // Completed-match reports retain the plan used; stale fixture-keyed
+      // drafts must not leak into a regenerated season with reusable IDs.
+      save.opponentPlans = {};
       const next = generateSeasonFixtures(save.world, save.userClubId, (save.seed ^ (save.season.seasonYear + 1)) >>> 0);
       for (const f of next.fixtures) save.world.fixtures[f.id] = f;
       save.cup = next.cup;
@@ -313,6 +319,7 @@ export const useGameStore = create<GameState>((set, get) => {
         ],
         offers: [],
         results: {},
+        opponentPlans: {},
         settings: { ...DEFAULT_SETTINGS },
         savedAt: Date.now(),
       };
@@ -483,6 +490,28 @@ export const useGameStore = create<GameState>((set, get) => {
       await persist();
     },
 
+    updateOpponentPlan: async (fixtureId, plan) => {
+      const save = get().save;
+      const fixture = save?.world.fixtures[fixtureId];
+      if (!save || !fixture || (fixture.homeClubId !== save.userClubId && fixture.awayClubId !== save.userClubId)) {
+        return null;
+      }
+      const opponentClubId = fixture.homeClubId === save.userClubId ? fixture.awayClubId : fixture.homeClubId;
+      const ownPlayers = (save.world.clubs[save.userClubId]?.playerIds ?? [])
+        .map((id) => save.world.players[id])
+        .filter((player): player is Player => !!player);
+      const opponentPlayers = (save.world.clubs[opponentClubId]?.playerIds ?? [])
+        .map((id) => save.world.players[id])
+        .filter((player): player is Player => !!player);
+      const sanitized = sanitizeOpponentMatchPlan(plan, fixtureId, ownPlayers, opponentPlayers, "user");
+      commit((current) => {
+        current.opponentPlans ??= {};
+        current.opponentPlans[fixtureId] = sanitized;
+      });
+      await persist();
+      return sanitized;
+    },
+
     markAllInboxRead: () => {
       commit((save) => {
         for (const m of save.inbox) m.read = true;
@@ -589,6 +618,7 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
     });
 
     if (isUser) {
+      side.opponentPlan = save.opponentPlans?.[fixtureId];
       const roster = buildInstructionRoster(squad, side.starters, side.roles, side.displayNumbers);
       const plans = compileInstructionPlans(
         squad,

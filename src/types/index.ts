@@ -433,6 +433,37 @@ export interface TacticalDirectives {
   targetDelivery?: "ground" | "aerial" | "mixed";
 }
 
+export type MatchPlanPressing = "normal" | "pressOnReceive" | "standOff";
+export type MatchPlanShowOnto = "normal" | "inside" | "outside" | "weakFoot";
+export type MatchPlanAttackApproach = "none" | "pace" | "dribble" | "aerial";
+
+/** A fixture-specific plan against one exact, validated opponent. */
+export interface OpponentPlayerPlan {
+  targetPlayerId: string;
+  targetPlayerName: string;
+  /** Exact player charged with the primary marking job; omitted for zonal cover. */
+  markerPlayerId?: string;
+  markerPlayerName?: string;
+  tightMarking: boolean;
+  pressing: MatchPlanPressing;
+  showOnto: MatchPlanShowOnto;
+  doubleTeam: boolean;
+  preventCrosses: boolean;
+  attackApproach: MatchPlanAttackApproach;
+}
+
+export interface OpponentMatchPlan {
+  fixtureId: string;
+  source: "user" | "ai";
+  instructions: OpponentPlayerPlan[];
+}
+
+export interface OpponentPlanChangeRecord {
+  side: "home" | "away";
+  minute: number;
+  plan: OpponentMatchPlan;
+}
+
 export interface TacticalPlayerAssignment {
   playerId: string;
   playerName: string;
@@ -656,6 +687,13 @@ export interface MatchAnalysis {
   finalAwayFormation: string;
   players: Record<string, PlayerMatchAnalysis>;
   tacticalChanges: TacticalChangeRecord[];
+  /** Fixture plans actually used by each side, retained for post-match review. */
+  opponentPlans?: {
+    home?: OpponentMatchPlan;
+    away?: OpponentMatchPlan;
+  };
+  /** Initial and live plan versions in the order they physically took effect. */
+  opponentPlanChanges?: OpponentPlanChangeRecord[];
 }
 
 export interface MatchResult {
@@ -747,6 +785,8 @@ export interface GameSave {
   offers: TransferOffer[];
   /** Permanent user-match reports keyed by fixtureId, retained across seasons. */
   results: Record<string, MatchResult>;
+  /** User-authored, fixture-specific plans. Optional for pre-feature saves. */
+  opponentPlans?: Record<string, OpponentMatchPlan>;
   settings: GameSettings;
   savedAt: number;
 }

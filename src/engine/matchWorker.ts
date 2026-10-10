@@ -2,11 +2,11 @@
  * matchWorker — runs MatchSimulator off the main thread.
  * Communicates via postMessage at up to 10 Hz.
  *
- * Main -> worker: init | start | pause | resume | speed | skip | sub | tactics | directives | resumeHalf
+ * Main -> worker: init | start | pause | resume | speed | skip | sub | tactics | directives | opponentPlan | resumeHalf
  * Worker -> main: ready | state | event | halfTime | fullTime
  */
 import { MatchSimulator, type MatchSnapshot, type Side, type SimOptions, type TeamSide } from "./matchSimulator";
-import type { MatchEvent, TacticalSetup } from "../types";
+import type { MatchEvent, OpponentMatchPlan, TacticalSetup } from "../types";
 import type { PlayerDirectives } from "./directives";
 
 interface InitPayload {
@@ -25,6 +25,7 @@ type InMsg =
   | { type: "skip" }
   | { type: "sub"; side: Side; starterIdx: number; benchIdx: number }
   | { type: "tactics"; side: Side; tactics: TacticalSetup }
+  | { type: "opponentPlan"; side: Side; plan: OpponentMatchPlan }
   | {
       type: "directives";
       side: Side;
@@ -115,6 +116,10 @@ self.onmessage = (ev: MessageEvent<InMsg>) => {
       break;
     case "directives":
       sim?.updateDirectives(msg.side, msg.directives, msg.teamDirectives);
+      break;
+    case "opponentPlan":
+      sim?.updateOpponentPlan(msg.side, msg.plan);
+      if (sim) post({ type: "state", state: sim.getState() });
       break;
   }
 };

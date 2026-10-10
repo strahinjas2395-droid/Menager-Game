@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getMatchContext, useGameStore } from "@/store/gameStore";
 import { buildInstructionRoster, instructionContextFingerprint } from "@/engine/directives";
+import { defaultOpponentPlayerPlan } from "@/engine/matchPlan";
 import { LEAGUES_DATA, slugify } from "@/database/leagueGenerator";
 import { Difficulty, type MatchResult, type MatchStats, type PlayerMatchAnalysis } from "@/types";
 
@@ -167,6 +168,46 @@ describe("core game loop (integration)", () => {
       targetPriority: 1,
       targetDelivery: "aerial",
     });
+
+    // Exact opponent plans are validated, keyed by fixture and compiled into
+    // the user side without making the field mandatory for older saves.
+    const oppositionSide = week1UserFixture.homeClubId === clubId ? ctx.away : ctx.home;
+    const opponentTarget = oppositionSide.starters.find((player) => player.primaryPosition !== "GK")!;
+    const exactMarker = semanticSide.starters.find((player) => player.primaryPosition !== "GK")!;
+    const savedPlan = await store().updateOpponentPlan(week1UserFixture.id, {
+      fixtureId: "spoofed-fixture",
+      source: "ai",
+      instructions: [{
+        ...defaultOpponentPlayerPlan(opponentTarget),
+        targetPlayerName: "spoofed target",
+        markerPlayerId: exactMarker.id,
+        markerPlayerName: "spoofed marker",
+        tightMarking: true,
+        pressing: "pressOnReceive",
+        showOnto: "weakFoot",
+        doubleTeam: true,
+        preventCrosses: false,
+        attackApproach: "pace",
+      }],
+    });
+    expect(savedPlan).toMatchObject({ fixtureId: week1UserFixture.id, source: "user" });
+    expect(savedPlan?.instructions[0]).toMatchObject({
+      targetPlayerId: opponentTarget.id,
+      targetPlayerName: `${opponentTarget.firstName} ${opponentTarget.lastName}`,
+      markerPlayerId: exactMarker.id,
+      markerPlayerName: `${exactMarker.firstName} ${exactMarker.lastName}`,
+    });
+    expect(store().save!.opponentPlans?.[week1UserFixture.id]).toEqual(savedPlan);
+    ctx = getMatchContext(store().save!, week1UserFixture.id)!;
+    expect((ctx.home.isUserTeam ? ctx.home : ctx.away).opponentPlan).toEqual(savedPlan);
+
+    const currentPlans = store().save!.opponentPlans;
+    delete store().save!.opponentPlans;
+    expect(getMatchContext(store().save!, week1UserFixture.id)).toBeTruthy();
+    expect((getMatchContext(store().save!, week1UserFixture.id)!.home.isUserTeam
+      ? getMatchContext(store().save!, week1UserFixture.id)!.home
+      : getMatchContext(store().save!, week1UserFixture.id)!.away).opponentPlan).toBeUndefined();
+    store().save!.opponentPlans = currentPlans;
 
     const buildResult = (fixtureId: string): MatchResult => {
       const s = store().save!;

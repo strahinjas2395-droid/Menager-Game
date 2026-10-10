@@ -95,7 +95,12 @@ interface SimulatorTestPlayer {
   vx: number;
   vy: number;
   nextTouchAt: number;
+  brainTx: number;
+  brainTy: number;
+  brainNextAt: number;
   role: string;
+  intent: string;
+  runUntil: number;
   sentOff: boolean;
 }
 
@@ -787,6 +792,213 @@ describe("MatchSimulator", () => {
     );
 
     expect(directlyConverging.length).toBeLessThanOrEqual(3);
+  });
+
+  it("makes an exact tight marker approach the named opponent measurably closer and from the requested side", () => {
+    const run = (planned: boolean) => {
+      const built = setup(9631);
+      built.home.isUserTeam = true;
+      const markerIndex = Math.max(0, built.home.roles.findIndex((role) => role === "CB"));
+      const targetIndex = Math.max(0, built.away.roles.findIndex((role) => role === "RW" || role === "LW"));
+      if (planned) {
+        built.home.opponentPlan = {
+          fixtureId: "marking-test",
+          source: "user",
+          instructions: [{
+            targetPlayerId: built.away.starters[targetIndex].id,
+            targetPlayerName: "untrusted",
+            markerPlayerId: built.home.starters[markerIndex].id,
+            markerPlayerName: "untrusted",
+            tightMarking: true,
+            pressing: "normal",
+            showOnto: "outside",
+            doubleTeam: false,
+            preventCrosses: false,
+            attackApproach: "none",
+          }],
+        };
+      }
+      const sim = new MatchSimulator(built.home, built.away, { seed: 9631, fixtureId: "marking-test" });
+      const internal = simulatorHarness(sim);
+      const marker = internal.homePlayers[markerIndex];
+      const target = internal.awayPlayers[targetIndex];
+      marker.x = 320;
+      marker.y = 520;
+      marker.vx = 0;
+      marker.vy = 0;
+      marker.brainTx = marker.x;
+      marker.brainTy = marker.y;
+      marker.brainNextAt = Infinity;
+      target.x = 640;
+      target.y = 105;
+      target.vx = 0;
+      target.vy = 0;
+      target.tx = target.x;
+      target.ty = target.y;
+      internal.giveBallTo("away", targetIndex);
+      internal.decisionCd = 5;
+      sim.tick(0.1);
+      return {
+        distance: Math.hypot(marker.tx - target.x, marker.ty - target.y),
+        markerTarget: { x: marker.tx, y: marker.ty },
+        target: { x: target.x, y: target.y },
+      };
+    };
+
+    const baseline = run(false);
+    const instructed = run(true);
+    expect(instructed.distance).toBeLessThan(baseline.distance * 0.7);
+    expect(instructed.markerTarget.x).toBeLessThan(instructed.target.x); // goal-side for the home team
+    expect(instructed.markerTarget.y).toBeGreaterThan(instructed.target.y); // occupies inside shoulder, showing outside
+  });
+
+  it("prioritises reception press and double-team instructions without ever selecting more than two pressers", () => {
+    const { sim, home, away } = setup(9632);
+    const internal = simulatorHarness(sim);
+    away.tactics.pressing = PressingIntensity.Extreme;
+    const carrierIndex = Math.max(0, home.roles.findIndex((role) => role === "CAM" || role === "CM"));
+    const markerIndex = Math.max(0, away.roles.findIndex((role) => role === "CB"));
+    const carrier = internal.homePlayers[carrierIndex];
+    carrier.x = 510;
+    carrier.y = 310;
+    carrier.tx = carrier.x;
+    carrier.ty = carrier.y;
+    internal.awayPlayers.filter((player) => player.role !== "GK").forEach((player, index) => {
+      player.x = 510 + Math.cos(index) * 90;
+      player.y = 310 + Math.sin(index) * 90;
+      player.tx = player.x;
+      player.ty = player.y;
+    });
+    sim.updateOpponentPlan("away", {
+      fixtureId: "press-test",
+      source: "ai",
+      instructions: [{
+        targetPlayerId: home.starters[carrierIndex].id,
+        targetPlayerName: "untrusted",
+        markerPlayerId: away.starters[markerIndex].id,
+        markerPlayerName: "untrusted",
+        tightMarking: true,
+        pressing: "pressOnReceive",
+        showOnto: "weakFoot",
+        doubleTeam: true,
+        preventCrosses: false,
+        attackApproach: "none",
+      }],
+    });
+    internal.giveBallTo("home", carrierIndex);
+    internal.decisionCd = 5;
+    sim.tick(0.1);
+
+    const pressers = internal.awayPlayers.filter((player) => player.intent === "press");
+    expect(pressers).toHaveLength(2);
+    expect(pressers.some((player) => player.p.id === away.starters[markerIndex].id)).toBe(true);
+  });
+
+  it("applies live plan changes immediately and retains the validated version in permanent analysis", () => {
+    const { sim, home, away } = setup(9633);
+    const targetIndex = Math.max(0, away.roles.findIndex((role) => role !== "GK"));
+    const markerIndex = Math.max(0, home.roles.findIndex((role) => role === "CB"));
+    sim.updateOpponentPlan("home", {
+      fixtureId: "live-plan",
+      source: "user",
+      instructions: [{
+        targetPlayerId: away.starters[targetIndex].id,
+        targetPlayerName: "wrong name",
+        markerPlayerId: home.starters[markerIndex].id,
+        markerPlayerName: "wrong marker",
+        tightMarking: true,
+        pressing: "standOff",
+        showOnto: "inside",
+        doubleTeam: true,
+        preventCrosses: false,
+        attackApproach: "pace",
+      }],
+    });
+
+    const analysis = sim.getAnalysis();
+    const retained = analysis.opponentPlans?.home?.instructions[0];
+    expect(retained).toMatchObject({
+      targetPlayerId: away.starters[targetIndex].id,
+      targetPlayerName: `${away.starters[targetIndex].firstName} ${away.starters[targetIndex].lastName}`,
+      markerPlayerId: home.starters[markerIndex].id,
+      pressing: "standOff",
+      doubleTeam: false,
+      attackApproach: "pace",
+    });
+    expect(analysis.tacticalChanges.at(-1)?.reason).toBe("Opponent-specific match plan updated");
+    expect(analysis.opponentPlanChanges?.filter((change) => change.side === "home")).toHaveLength(2);
+    expect(analysis.opponentPlanChanges?.at(-1)?.plan.instructions[0]).toEqual(retained);
+  });
+
+  it("lets an AI coach reassign its exact plan through the same mechanism after a lineup change", () => {
+    const { sim } = setup(9635);
+    const initial = sim.getAnalysis().opponentPlans?.away?.instructions[0];
+    expect(initial?.targetPlayerId).toBeTruthy();
+    const targetIndex = sim.getState().homeLineup.findIndex((entry) => entry.playerId === initial?.targetPlayerId);
+    expect(targetIndex).toBeGreaterThanOrEqual(0);
+    expect(sim.substitute("home", targetIndex, 0)).toBe(true);
+
+    const updated = sim.getAnalysis();
+    expect(updated.opponentPlans?.away?.instructions.some(
+      (instruction) => instruction.targetPlayerId === initial?.targetPlayerId,
+    )).toBe(false);
+    expect(updated.opponentPlanChanges?.filter((change) => change.side === "away").length).toBeGreaterThan(1);
+  });
+
+  it("moves a carrier into a selected weak channel instead of applying a hidden defender penalty", () => {
+    const run = (planned: boolean) => {
+      const built = setup(9634);
+      built.home.isUserTeam = true;
+      const carrierIndex = Math.max(0, built.home.roles.findIndex((role) => role === "RW" || role === "LW"));
+      const targetIndex = Math.max(0, built.away.roles.findIndex((role) => role === "CB"));
+      if (planned) {
+        built.home.opponentPlan = {
+          fixtureId: "channel-test",
+          source: "user",
+          instructions: [{
+            targetPlayerId: built.away.starters[targetIndex].id,
+            targetPlayerName: "target",
+            tightMarking: false,
+            pressing: "normal",
+            showOnto: "normal",
+            doubleTeam: false,
+            preventCrosses: false,
+            attackApproach: "pace",
+          }],
+        };
+      }
+      const defenderBefore = {
+        pace: built.away.starters[targetIndex].pace,
+        acceleration: built.away.starters[targetIndex].acceleration,
+      };
+      const sim = new MatchSimulator(built.home, built.away, { seed: 9634, fixtureId: "channel-test" });
+      const internal = simulatorHarness(sim);
+      const carrier = internal.homePlayers[carrierIndex];
+      const target = internal.awayPlayers[targetIndex];
+      carrier.x = 650;
+      carrier.y = 180;
+      carrier.tx = carrier.x;
+      carrier.ty = carrier.y;
+      target.x = 800;
+      target.y = 170;
+      target.tx = target.x;
+      target.ty = target.y;
+      internal.awayPlayers.filter((player) => player !== target).forEach((player) => {
+        player.x = 180;
+        player.y = 500;
+      });
+      internal.giveBallTo("home", carrierIndex);
+      internal.decisionCd = 5;
+      sim.tick(0.1);
+      expect(target.p.pace).toBe(defenderBefore.pace);
+      expect(target.p.acceleration).toBe(defenderBefore.acceleration);
+      return { targetX: carrier.tx, runUntil: carrier.runUntil };
+    };
+
+    const baseline = run(false);
+    const instructed = run(true);
+    expect(instructed.targetX).toBeGreaterThan(baseline.targetX + 80);
+    expect(instructed.runUntil).toBeGreaterThan(baseline.runUntil);
   });
 
   it("builds dedicated corner, throw-in, free-kick and goal-kick shapes", () => {

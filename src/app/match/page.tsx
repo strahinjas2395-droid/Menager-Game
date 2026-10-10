@@ -6,10 +6,12 @@ import { BarChart3, Pause, Play, FastForward, Gauge, SlidersHorizontal, X, Check
 import MatchCanvas, { type MatchScene } from "@/components/MatchCanvas";
 import StepDots from "@/components/StepDots";
 import InstructionInterpretationView from "@/components/InstructionInterpretationView";
+import OpponentPlanEditor, { type PlanEditorPlayer } from "@/components/OpponentPlanEditor";
+import { emptyOpponentMatchPlan } from "@/engine/matchPlan";
 import { getMatchContext, useGameStore, type MatchContext } from "@/store/gameStore";
 import { selectBestXI, type MatchSnapshot, type Side } from "@/engine/matchSimulator";
 import type {
-  MatchEvent, MatchResult, MatchStats, TacticalInstructionCache, TacticalSetup,
+  MatchEvent, MatchResult, MatchStats, OpponentMatchPlan, TacticalInstructionCache, TacticalSetup,
 } from "@/types";
 import {
   CompetitionType, DefensiveLine, MatchEventType, MentalityLevel, PlayStyle,
@@ -41,6 +43,35 @@ interface GoalCelebrationView {
   teamName: string;
   scorerName: string;
   color: string;
+}
+
+function planEditorRoster(
+  team: MatchContext["home"],
+  lineup?: MatchSnapshot["homeLineup"],
+): PlanEditorPlayer[] {
+  if (!lineup?.length) {
+    return [
+      ...team.starters.map((player, index) => ({
+        player,
+        role: team.roles[index],
+        shirtNumber: team.displayNumbers[index],
+      })),
+      ...team.bench.map((player) => ({ player, role: player.primaryPosition, shirtNumber: player.shirtNumber })),
+    ];
+  }
+  const squad = [...team.starters, ...team.bench];
+  const active = lineup.flatMap((entry) => {
+    if (entry.sentOff) return [];
+    const player = squad.find((candidate) => candidate.id === entry.playerId);
+    return player ? [{ player, role: entry.position, shirtNumber: entry.shirtNumber }] : [];
+  });
+  const activeIds = new Set(active.map(({ player }) => player.id));
+  return [
+    ...active,
+    ...team.bench
+      .filter((player) => !activeIds.has(player.id))
+      .map((player) => ({ player, role: player.primaryPosition, shirtNumber: player.shirtNumber })),
+  ];
 }
 
 export default function MatchPage() {
@@ -86,6 +117,10 @@ function MatchScreen() {
   const [showStats, setShowStats] = useState(false);
   const [showTactics, setShowTactics] = useState(false);
   const [liveTactics, setLiveTactics] = useState<TacticalSetup | null>(null);
+  const [liveOpponentPlan, setLiveOpponentPlan] = useState<OpponentMatchPlan>(() => {
+    const team = ctx ? (ctx.home.isUserTeam ? ctx.home : ctx.away) : null;
+    return team?.opponentPlan ?? emptyOpponentMatchPlan(fixtureId);
+  });
   const [liveInstructions, setLiveInstructions] = useState<Record<string, string>>({});
   const [liveInterpreting, setLiveInterpreting] = useState(false);
   const [liveInterpretWarning, setLiveInterpretWarning] = useState<string | null>(null);
@@ -139,6 +174,7 @@ function MatchScreen() {
       setPieces: { ...source.setPieces },
     });
     const team = ctx.home.isUserTeam ? ctx.home : ctx.away;
+    setLiveOpponentPlan(team.opponentPlan ?? emptyOpponentMatchPlan(ctx.fixture.id));
     setLiveInstructions(Object.fromEntries(
       [...team.starters, ...team.bench].map((p) => [p.id, p.individualInstructions ?? ""]),
     ));
@@ -221,7 +257,7 @@ function MatchScreen() {
       payload: {
         home: ctx.home,
         away: ctx.away,
-        options: { seed: ctx.seed, timeScale: 6, difficulty: save?.difficulty },
+        options: { seed: ctx.seed, fixtureId: ctx.fixture.id, timeScale: 6, difficulty: save?.difficulty },
       },
     });
     workerRef.current = worker;
@@ -355,6 +391,9 @@ function MatchScreen() {
       directives: plans.playerDirectives,
       teamDirectives: plans.teamDirectives,
     });
+    // The worker validates and applies this without restarting the simulation;
+    // the final version is retained in permanent match analysis.
+    post({ type: "opponentPlan", side: userSide, plan: liveOpponentPlan });
     setLiveInterpreting(false);
     closeTactics();
   };
@@ -452,6 +491,16 @@ function MatchScreen() {
     !isKnockout ||
     displayHome !== displayAway ||
     (pens !== null && pens.home !== pens.away);
+  const userMatchTeam = userSide === "home" ? ctx.home : ctx.away;
+  const opponentMatchTeam = userSide === "home" ? ctx.away : ctx.home;
+  const planOwnPlayers = planEditorRoster(
+    userMatchTeam,
+    userSide === "home" ? snapshot?.homeLineup : snapshot?.awayLineup,
+  );
+  const planOpponentPlayers = planEditorRoster(
+    opponentMatchTeam,
+    userSide === "home" ? snapshot?.awayLineup : snapshot?.homeLineup,
+  );
 
   return (
     <main className="flex h-full flex-col overflow-hidden bg-navy">
@@ -568,6 +617,10 @@ function MatchScreen() {
         <LiveTacticsPanel
           tactics={liveTactics}
           onChange={setLiveTactics}
+          opponentPlan={liveOpponentPlan}
+          onOpponentPlanChange={setLiveOpponentPlan}
+          planOwnPlayers={planOwnPlayers}
+          planOpponentPlayers={planOpponentPlayers}
           onApply={applyLiveTactics}
           onClose={closeTactics}
           home={homeClub.shortName}
@@ -756,13 +809,18 @@ const LIVE_SLIDERS: {
 ];
 
 function LiveTacticsPanel({
-  tactics, onChange, onApply, onClose, home, away, score, minute,
+  tactics, onChange, opponentPlan, onOpponentPlanChange, planOwnPlayers, planOpponentPlayers,
+  onApply, onClose, home, away, score, minute,
   currentLineup, bench, pendingSub, onPendingSub, onSub, atHalfTime,
   instructionPlayers, instructionText, onInstructionText,
   instructionRoster, instructionFingerprint, interpreting, interpretWarning,
 }: {
   tactics: TacticalSetup;
   onChange: (t: TacticalSetup) => void;
+  opponentPlan: OpponentMatchPlan;
+  onOpponentPlanChange: (plan: OpponentMatchPlan) => void;
+  planOwnPlayers: PlanEditorPlayer[];
+  planOpponentPlayers: PlanEditorPlayer[];
   onApply: () => void;
   onClose: () => void;
   home: string;
@@ -899,6 +957,17 @@ function LiveTacticsPanel({
                 {Object.values(TimeWasting).map((v) => <option key={v} value={v} className="bg-card">{v}</option>)}
               </select>
             </label>
+          </div>
+
+          <div className="mt-4">
+            <OpponentPlanEditor
+              plan={opponentPlan}
+              ownPlayers={planOwnPlayers}
+              opponents={planOpponentPlayers}
+              onChange={onOpponentPlanChange}
+              compact
+            />
+            <p className="mt-1.5 text-[9px] text-white/35">Changes take effect when you apply and resume.</p>
           </div>
 
           <div className="mt-4 rounded-xl border border-gold/20 bg-card p-3">
