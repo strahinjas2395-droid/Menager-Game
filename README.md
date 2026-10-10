@@ -18,7 +18,7 @@ Other scripts:
 
 ```bash
 npm run typecheck  # tsc --noEmit
-npm test           # vitest (64 specs)
+npm test           # full Vitest suite
 npm run build      # production build
 ```
 
@@ -30,9 +30,11 @@ npm run build      # production build
   (weeks 7/14/21/28/35), an 8-group continental championship with single-leg knockouts
   (weeks 30/33/36/40), and transfer windows in weeks 1–4 and 19–22.
 - **Live matches**: pure-TypeScript engine simulated in a Web Worker at 10 Hz, rendered as
-  dots on a Phaser pitch — pause, 1/2/4/8× speed, skip, live stats and commentary, extra
-  time & penalty shootouts in knockouts. A match-day tactical console applies formation,
-  style, team instructions, individual instructions and substitutions without restarting.
+  dots on a Phaser pitch with fixed eight-minute halves, pause, live stats and commentary,
+  extra time and penalty shootouts in knockouts. A match-day tactical console applies
+  formation, style, team instructions, individual instructions and substitutions without
+  restarting. A deterministic touchline advisor reads the live score and telemetry, explains
+  exact control changes, and can apply them immediately without interrupting play.
 - **Tactical simulation**: distinct build-up, settled attack, defensive-block, counterattack
   and counter-press phases; role/formation-aware movement; short combinations, recycling,
   switches, through balls, target-man play, overlaps, crosses and cutbacks; contextual

@@ -36,6 +36,11 @@ import { interpretTacticalInstructions, type TacticalInstructionRequest } from "
 import { expectedGoals } from "@/engine/leagueEngine";
 import { penaltyShootout } from "@/engine/cupEngine";
 import { SeededRNG } from "@/database/rng";
+import {
+  applyTacticalAdvice,
+  generateTacticalAdvice,
+  type TacticalAdvice,
+} from "@/engine/tacticalAdvisor";
 
 type WorkerMsg =
   | { type: "ready" }
@@ -284,6 +289,31 @@ function MatchScreen() {
   const post = useCallback((msg: unknown) => {
     workerRef.current?.postMessage(msg);
   }, []);
+
+  const assistantAdvice = useMemo(() => {
+    if (!snapshot || !liveTactics || fullTime) return [];
+    const userIsHome = userSide === "home";
+    return generateTacticalAdvice({
+      minute: Math.floor(snapshot.gameTime / 60),
+      side: userSide,
+      scoreFor: userIsHome ? snapshot.homeScore : snapshot.awayScore,
+      scoreAgainst: userIsHome ? snapshot.awayScore : snapshot.homeScore,
+      stats: snapshot.stats,
+      tactics: liveTactics,
+    });
+  }, [snapshot, liveTactics, fullTime, userSide]);
+
+  const applyAssistantAdvice = (advice: TacticalAdvice) => {
+    if (!liveTactics) return;
+    const updated = applyTacticalAdvice(liveTactics, advice);
+    setLiveTactics(updated);
+    post({
+      type: "tactics",
+      side: userSide,
+      tactics: updated,
+      reason: `Assistant advice: ${advice.title}`,
+    });
+  };
 
   const togglePause = () => {
     post({ type: paused ? "resume" : "pause" });
@@ -569,6 +599,21 @@ function MatchScreen() {
             </div>
           )}
 
+          {assistantAdvice[0] ? (
+            <TacticalAdviceCard
+              advice={assistantAdvice[0]}
+              onApply={() => applyAssistantAdvice(assistantAdvice[0])}
+              onReview={openTactics}
+            />
+          ) : snapshot && !fullTime ? (
+            <div className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[8px] font-semibold text-white/40">
+              <Sparkles size={10} className="text-gold/65" />
+              {snapshot.gameTime < 15 * 60
+                ? "Assistant analysing the match…"
+                : "Assistant: no urgent tactical change"}
+            </div>
+          ) : null}
+
           <div className="min-h-0 flex-1 overflow-y-auto rounded-xl bg-card/70 p-2">
             <div className="stat-label mb-1">Live Commentary</div>
             <ul className="space-y-1">
@@ -720,6 +765,46 @@ function MatchScreen() {
         </div>
       )}
     </main>
+  );
+}
+
+function TacticalAdviceCard({
+  advice,
+  onApply,
+  onReview,
+}: {
+  advice: TacticalAdvice;
+  onApply: () => void;
+  onReview: () => void;
+}) {
+  return (
+    <section
+      className="shrink-0 rounded-xl border border-gold/35 bg-gold/10 p-2.5 shadow-lg"
+      aria-label="Assistant tactical advice"
+    >
+      <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-gold">
+        <Sparkles size={11} /> Assistant insight
+      </div>
+      <h3 className="mt-1 text-[11px] font-black text-white">{advice.title}</h3>
+      <p className="mt-0.5 text-[9px] leading-snug text-white/60">{advice.observation}</p>
+      <p className="mt-1 text-[8px] leading-snug text-gold/80">{advice.changes.join(" · ")}</p>
+      <div className="mt-2 grid grid-cols-2 gap-1.5">
+        <button
+          type="button"
+          onClick={onReview}
+          className="rounded-lg border border-white/10 bg-navy/70 px-2 py-1 text-[9px] font-bold text-white/60"
+        >
+          Review
+        </button>
+        <button
+          type="button"
+          onClick={onApply}
+          className="rounded-lg bg-gold px-2 py-1 text-[9px] font-black text-navy"
+        >
+          Apply now
+        </button>
+      </div>
+    </section>
   );
 }
 

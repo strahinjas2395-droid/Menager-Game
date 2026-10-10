@@ -667,7 +667,7 @@ describe("MatchSimulator", () => {
     sim.tick(0.5);
     const beforeTime = sim.getState().gameTime;
     const changed = { ...home.tactics, formation: "4-4-2", pressing: PressingIntensity.Extreme };
-    sim.updateTactics("home", changed);
+    sim.updateTactics("home", changed, "Assistant advice: raise pressure");
     sim.updateDirectives("home", {
       [home.starters[9].id]: { targetMan: true, holdPosition: true },
     }, { clearImmediately: true });
@@ -676,6 +676,7 @@ describe("MatchSimulator", () => {
     expect(sim.home.teamDirectives).toEqual({ clearImmediately: true });
     expect(sim.home.roles.filter((r) => r === "ST")).toHaveLength(2);
     expect(sim.getState().gameTime).toBe(beforeTime); // tactical UI does not restart the match
+    expect(sim.getAnalysis().tacticalChanges.at(-1)?.reason).toBe("Assistant advice: raise pressure");
   });
 
 

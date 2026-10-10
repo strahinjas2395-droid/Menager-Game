@@ -22,7 +22,7 @@ type InMsg =
   | { type: "resume" }
   | { type: "resumeHalf" }
   | { type: "sub"; side: Side; starterIdx: number; benchIdx: number }
-  | { type: "tactics"; side: Side; tactics: TacticalSetup }
+  | { type: "tactics"; side: Side; tactics: TacticalSetup; reason?: string }
   | { type: "opponentPlan"; side: Side; plan: OpponentMatchPlan }
   | {
       type: "directives";
@@ -100,7 +100,7 @@ self.onmessage = (ev: MessageEvent<InMsg>) => {
       if (sim) post({ type: "state", state: sim.getState() });
       break;
     case "tactics":
-      sim?.updateTactics(msg.side, msg.tactics);
+      sim?.updateTactics(msg.side, msg.tactics, msg.reason);
       if (sim) post({ type: "state", state: sim.getState() });
       break;
     case "directives":
