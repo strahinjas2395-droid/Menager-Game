@@ -229,7 +229,11 @@ export const useGameStore = create<GameState>((set, get) => {
     // AI transfer activity during open windows (every other window week)
     if (save.season.transferWindowOpen && week % 2 === 1) {
       const rng = new SeededRNG((save.seed + week * 77) >>> 0);
-      const moves = aiTransferActivity(save.world, rng, rng.int(2, 5));
+      const moves = aiTransferActivity(save.world, {
+        userClubId: save.userClubId,
+        rng,
+        moves: rng.int(2, 5),
+      });
       for (const m of moves) {
         const p = save.world.players[m.playerId];
         const to = save.world.clubs[m.to];

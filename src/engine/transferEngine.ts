@@ -123,16 +123,32 @@ export function completeTransfer(
   return { ok: true };
 }
 
+export interface AITransferActivityOptions {
+  /** Human-controlled club: AI activity must never mutate this club or its players. */
+  userClubId: string;
+  rng?: SeededRNG;
+  moves?: number;
+}
+
 /**
  * AI clubs make a handful of transfers during open windows.
- * Returns completed moves for news generation.
+ *
+ * The user club is a required protected boundary rather than an optional
+ * filter. This makes callers identify the human-controlled club explicitly and
+ * ensures background simulation can never spend its budget or sell a player.
+ * Returns completed AI-to-AI moves for news generation.
  */
 export function aiTransferActivity(
   world: WorldDatabase,
-  rng: SeededRNG = new SeededRNG(randomSeed()),
-  moves = 4,
+  options: AITransferActivityOptions,
 ): { playerId: string; from: string; to: string; fee: number }[] {
-  const clubs = Object.values(world.clubs);
+  const { userClubId, rng = new SeededRNG(randomSeed()), moves = 4 } = options;
+  const userClub = world.clubs[userClubId];
+  // Fail closed if a corrupt/imported save points at a missing user club.
+  if (!userClub) return [];
+
+  const protectedPlayerIds = new Set(userClub.playerIds);
+  const clubs = Object.values(world.clubs).filter((club) => club.id !== userClubId);
   const completed: { playerId: string; from: string; to: string; fee: number }[] = [];
 
   for (let i = 0; i < moves; i++) {
@@ -156,6 +172,8 @@ export function aiTransferActivity(
       (p) =>
         p.primaryPosition === needPos &&
         p.contract.clubId !== buyer.id &&
+        p.contract.clubId !== userClubId &&
+        !protectedPlayerIds.has(p.id) &&
         p.reputation > (posScore.get(needPos) ?? 0) / Math.max(1, squad.length) + 4 &&
         p.contract.transferValue < buyer.budget * 0.5,
     );
@@ -166,6 +184,14 @@ export function aiTransferActivity(
     const fee = askingPriceFor(target, world);
     if (fee > buyer.budget * 0.45) continue;
     const seller = world.clubs[target.contract.clubId];
+    // Re-check at the mutation boundary so even inconsistent roster/contract
+    // data cannot make an AI transfer touch the protected user club.
+    if (
+      buyer.id === userClubId ||
+      seller?.id === userClubId ||
+      target.contract.clubId === userClubId ||
+      protectedPlayerIds.has(target.id)
+    ) continue;
     // seller accepts if fee is decent and player is not their best
     const importance = playerImportance(target, world);
     if (fee < target.contract.transferValue * (0.9 + importance * 0.4)) continue;

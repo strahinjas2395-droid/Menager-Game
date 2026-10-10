@@ -10,6 +10,7 @@ import {
 } from "@/engine/continentalEngine";
 import { applyQuickMatchPlayerStats, TOTAL_WEEKS, fixturesForWeek, transferWindowOpen } from "@/engine/seasonManager";
 import {
+  aiTransferActivity,
   askingPriceFor,
   completeTransfer,
   makeBid,
@@ -197,6 +198,54 @@ describe("transferEngine", () => {
     return { world, player, seller, buyer, broke };
   }
 
+  function buildProtectedTransferWorld() {
+    const user = mkClub("user", "l0", 80, 1_000_000);
+    const seller = mkClub("seller-ai", "l1", 55, 1_000_000);
+    const buyer = mkClub("buyer-ai", "l2", 75, 100_000_000);
+
+    const player = (
+      id: string,
+      clubId: string,
+      reputation: number,
+      transferValue = 1_000_000,
+    ) => ({
+      id,
+      firstName: "Transfer",
+      lastName: id,
+      primaryPosition: "ST",
+      reputation,
+      morale: 70,
+      contract: {
+        clubId,
+        weeklyWage: 10_000,
+        contractYearsRemaining: 3,
+        transferValue,
+      },
+    } as unknown as Player);
+
+    // The user star deliberately outranks the AI-owned target. Without the
+    // protected-club boundary this exact seed selects and sells the user star.
+    const userStar = player("user-star", user.id, 100);
+    const sellerStar = player("seller-star", seller.id, 90);
+    const buyerSquad = Array.from({ length: 15 }, (_, index) =>
+      player(`buyer-${index}`, buyer.id, 10, 500_000));
+
+    user.playerIds = [userStar.id];
+    seller.playerIds = [sellerStar.id];
+    buyer.playerIds = buyerSquad.map((member) => member.id);
+    const players = Object.fromEntries(
+      [userStar, sellerStar, ...buyerSquad].map((member) => [member.id, member]),
+    );
+    const world: WorldDatabase = {
+      players,
+      clubs: { [user.id]: user, [seller.id]: seller, [buyer.id]: buyer },
+      leagues: {},
+      managers: {},
+      fixtures: {},
+    };
+    return { world, user, userStar, seller, sellerStar, buyer };
+  }
+
   it("asks a premium over value for a key player", () => {
     const { world, player } = buildWorld();
     expect(playerImportance(player, world)).toBe(1); // only player in squad
@@ -256,5 +305,81 @@ describe("transferEngine", () => {
     const res = completeTransfer(world, "p1", 50_000_000, 35_000, 3, "broke");
     expect(res.ok).toBe(false);
     expect(res.error).toContain("budget");
+  });
+
+  it("keeps the user club and its players outside background AI transfers", () => {
+    const { world, user, userStar, seller, sellerStar, buyer } = buildProtectedTransferWorld();
+    const userBefore = structuredClone(user);
+    const userStarBefore = structuredClone(userStar);
+
+    const completed = aiTransferActivity(world, {
+      userClubId: user.id,
+      rng: new SeededRNG(1),
+      moves: 1,
+    });
+
+    expect(completed).toEqual([{
+      playerId: sellerStar.id,
+      from: seller.id,
+      to: buyer.id,
+      fee: 1_600_000,
+    }]);
+    expect(completed.every((move) => move.from !== user.id && move.to !== user.id)).toBe(true);
+    expect(user).toEqual(userBefore);
+    expect(userStar).toEqual(userStarBefore);
+    expect(user.playerIds).toEqual([userStar.id]);
+    expect(world.players[userStar.id].contract.clubId).toBe(user.id);
+    expect(seller.playerIds).not.toContain(sellerStar.id);
+    expect(buyer.playerIds).toContain(sellerStar.id);
+  });
+
+  it("never uses the user club as an AI buyer", () => {
+    const { world, user, seller, buyer } = buildProtectedTransferWorld();
+    const newUserSquad = [...buyer.playerIds];
+    for (const playerId of newUserSquad) world.players[playerId].contract.clubId = user.id;
+    user.playerIds = newUserSquad;
+    user.budget = 100_000_000;
+    buyer.playerIds = [];
+    buyer.budget = 1_000_000;
+    seller.budget = 1_000_000;
+    const before = structuredClone(world);
+
+    expect(aiTransferActivity(world, {
+      userClubId: user.id,
+      rng: new SeededRNG(1),
+      moves: 1,
+    })).toEqual([]);
+    expect(world).toEqual(before);
+  });
+
+  it("fails closed without a valid protected user club", () => {
+    const { world } = buildProtectedTransferWorld();
+    const before = structuredClone(world);
+
+    expect(aiTransferActivity(world, {
+      userClubId: "missing-user-club",
+      rng: new SeededRNG(1),
+      moves: 10,
+    })).toEqual([]);
+    expect(world).toEqual(before);
+  });
+
+  it("keeps protected AI transfer activity deterministic", () => {
+    const first = buildProtectedTransferWorld().world;
+    const second = buildProtectedTransferWorld().world;
+
+    const firstMoves = aiTransferActivity(first, {
+      userClubId: "user",
+      rng: new SeededRNG(77),
+      moves: 8,
+    });
+    const secondMoves = aiTransferActivity(second, {
+      userClubId: "user",
+      rng: new SeededRNG(77),
+      moves: 8,
+    });
+
+    expect(firstMoves).toEqual(secondMoves);
+    expect(first).toEqual(second);
   });
 });
