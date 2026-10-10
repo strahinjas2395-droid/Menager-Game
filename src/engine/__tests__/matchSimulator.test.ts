@@ -1517,6 +1517,77 @@ describe("MatchSimulator", () => {
     expect(splitCentreBacks).toHaveLength(2);
   });
 
+  it("uses a nearby distributor for routine free kicks without overriding an explicitly nominated taker", () => {
+    const { sim, home } = setup(9731);
+    const internal = simulatorHarness(sim);
+    const distantSpecialistIndex = Math.max(0, home.roles.findIndex((role) => role === "ST"));
+    const nearbyDefenderIndex = Math.max(0, home.roles.findIndex((role) => role === "CB"));
+    const distantSpecialist = internal.homePlayers[distantSpecialistIndex];
+    const nearbyDefender = internal.homePlayers[nearbyDefenderIndex];
+
+    internal.homePlayers.forEach((player, index) => {
+      player.x = 480 + index * 2;
+      player.y = 120 + index * 35;
+      Object.assign(player.p, { longPassing: 4, decisions: 4 });
+    });
+    Object.assign(distantSpecialist.p, { freeKickAccuracy: 20, technique: 20, longShots: 20 });
+    distantSpecialist.x = 900;
+    distantSpecialist.y = 325;
+    Object.assign(nearbyDefender.p, { longPassing: 20, decisions: 20 });
+    nearbyDefender.x = 105;
+    nearbyDefender.y = 325;
+
+    internal.startSetPiece("freeKick", "home", 110, 325);
+    const routinePiece = internal.setPiece!;
+    const routineTaker = internal.homePlayers[routinePiece.takerIdx];
+    expect(routinePiece.takerIdx).not.toBe(distantSpecialistIndex);
+    expect(Math.hypot(routineTaker.x - routinePiece.x, routineTaker.y - routinePiece.y)).toBeLessThan(120);
+
+    let ticks = 0;
+    while (internal.setPiece === routinePiece && ticks++ < 90) sim.tick(0.1);
+    expect(ticks).toBeLessThan(90);
+    expect(internal.setPiece).not.toBe(routinePiece);
+
+    // An exact user assignment remains authoritative even when that player is
+    // farther away; only the unassigned/default selection is contextual.
+    home.tactics.setPieces.freeKickId = distantSpecialist.p.id;
+    distantSpecialist.x = 900;
+    distantSpecialist.y = 325;
+    internal.startSetPiece("freeKick", "home", 110, 325);
+    expect(internal.setPiece?.takerIdx).toBe(distantSpecialistIndex);
+  });
+
+  it("retains a replacement offside free kick instead of leaving a dead set-piece phase", () => {
+    const { sim, home } = setup(9732);
+    const internal = simulatorHarness(sim);
+    const takerIndex = Math.max(0, home.roles.findIndex((role) => role === "CM" || role === "CDM"));
+    const receiverIndex = Math.max(0, home.roles.findIndex((role) => role === "ST"));
+    home.tactics.setPieces.freeKickId = home.starters[takerIndex].id;
+
+    internal.homePlayers.forEach((player, index) => {
+      player.sentOff = index !== takerIndex && index !== receiverIndex;
+    });
+    internal.awayPlayers.forEach((player) => {
+      player.x = 700;
+      player.y = 325;
+    });
+    internal.homePlayers[takerIndex].x = 490;
+    internal.homePlayers[takerIndex].y = 325;
+    internal.homePlayers[receiverIndex].x = 900;
+    internal.homePlayers[receiverIndex].y = 325;
+
+    internal.startSetPiece("freeKick", "home", 500, 325);
+    internal.setPiece!.timer = -1;
+    sim.tick(0.1);
+
+    expect(sim.getState().phase).toBe("setpiece");
+    expect(internal.setPiece).toMatchObject({ kind: "freeKick", side: "away", x: 900, y: 325 });
+    expect(sim.getEvents().slice(-2).map((event) => event.type)).toEqual([
+      MatchEventType.Offside,
+      MatchEventType.FreeKick,
+    ]);
+  });
+
   it("uses the nominated penalty taker and positions both teams for a rebound", () => {
     const { sim, home } = setup(974);
     const internal = simulatorHarness(sim);

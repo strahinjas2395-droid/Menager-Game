@@ -2629,6 +2629,12 @@ export class MatchSimulator {
           tx = side === "home" ? Math.min(tx, 488) : Math.max(tx, 512);
           if (parkRetreating) sp.intent = "recover";
         }
+        if (!hasBall && directive.defensiveDuty) {
+          // Apply the duty after pressing and spatial-brain calculations too;
+          // those systems may choose an angle, but cannot pull this player out
+          // of the midfield block the manager explicitly requested.
+          tx = side === "home" ? Math.min(tx, 510) : Math.max(tx, 490);
+        }
 
         sp.tx = clamp(tx, 18, 982);
         sp.ty = clamp(ty, 12, 638);
@@ -5047,7 +5053,7 @@ export class MatchSimulator {
       MatchEventType.Foul,
       offender.p.contract.clubId,
       offender.p.id,
-      `Free kick — ${victim.p.firstName} ${victim.p.lastName} fouled`,
+      `${victim.p.firstName} ${victim.p.lastName} brought down by ${offender.p.lastName}`,
     );
     this.startSetPiece("freeKick", fouledSide, victim.x, victim.y);
   }
@@ -5135,6 +5141,42 @@ export class MatchSimulator {
         .sort((a, b) => a.d - b.d);
       if (candidates[0]) return candidates[0].idx;
     }
+    if (kind === "freeKick") {
+      const distanceToGoalM = Math.abs(this.goalX(side) - x) / UNITS_PER_METER;
+      const deepRestart = distanceToGoalM > 65;
+      const candidates = this.players(side)
+        .map((p, idx) => ({
+          p,
+          idx,
+          d: Math.hypot(p.x - x, p.y - y),
+        }))
+        .filter(({ p }) => !p.sentOff && (p.role !== "GK" || deepRestart));
+
+      if (distanceToGoalM <= 42) {
+        // In shooting/crossing range use a specialist who is actually close
+        // enough to take the restart. The configured taker above remains
+        // authoritative; this only replaces the old default that could summon
+        // an unassigned striker from seventy metres away.
+        const nearby = candidates.filter(({ d }) => d <= 285);
+        const pool = nearby.length > 0 ? nearby : candidates;
+        pool.sort((a, b) => {
+          const quality = (entry: typeof a) =>
+            entry.p.p.freeKickAccuracy * 2.2 + entry.p.p.technique + entry.p.p.longShots * 0.45 - entry.d * 0.025;
+          return quality(b) - quality(a);
+        });
+        if (pool[0]) return pool[0].idx;
+      } else {
+        // Defensive and midfield free kicks are normally taken by a nearby
+        // defender, midfielder or keeper rather than the team's best shooter.
+        // Distance dominates, with distribution quality breaking close calls.
+        candidates.sort((a, b) => {
+          const suitability = (entry: typeof a) =>
+            -entry.d + entry.p.p.longPassing * 2.2 + entry.p.p.decisions * 1.1;
+          return suitability(b) - suitability(a);
+        });
+        if (candidates[0]) return candidates[0].idx;
+      }
+    }
     let best = -1;
     let bestScore = -Infinity;
     this.players(side).forEach((sp, idx) => {
@@ -5164,12 +5206,15 @@ export class MatchSimulator {
     this.carrier = null;
     this.flight = null;
     this.looseDribbleRace = null;
+    const freeKickDistanceM = Math.abs(this.goalX(side) - sx) / UNITS_PER_METER;
     this.setPiece = {
       kind,
       side,
       x: sx,
       y: sy,
-      timer: kind === "corner" ? 4.1 : kind === "freeKick" ? 3.5 : kind === "goalKick" ? 3 : 2.4,
+      timer: kind === "corner" ? 4.1 :
+        kind === "freeKick" ? (freeKickDistanceM <= 36 ? 2.6 : 1.8) :
+          kind === "goalKick" ? 3 : 2.4,
       takerIdx: this.selectedTakerIndex(side, kind, sx, sy),
     };
     this.ball.x = sx;
@@ -5236,7 +5281,10 @@ export class MatchSimulator {
     // take itself: execution waits until the named taker physically arrives.
     if (sp.timer <= 0 && takerReady) {
       this.executeSetPiece(sp);
-      this.setPiece = null;
+      // Execution can immediately create a replacement restart (most notably
+      // an offside free kick). Clear only the piece we just took; otherwise a
+      // newly-created free kick is erased while the phase still says setpiece.
+      if (this.setPiece === sp) this.setPiece = null;
     }
   }
 
@@ -5256,8 +5304,10 @@ export class MatchSimulator {
       return {
         ...setup,
         // Restarts should organise briskly, while still showing the whole run
-        // from the player's current position to the ball.
-        intensity: piece.kind === "corner" || piece.kind === "throw" ? 0.92 : 0.62,
+        // from the player's current position to the ball. Free-kick takers in
+        // particular must not spend a compressed match minute walking over.
+        intensity: piece.kind === "corner" || piece.kind === "throw" ? 0.92 :
+          piece.kind === "freeKick" ? 0.9 : 0.62,
       };
     }
 
