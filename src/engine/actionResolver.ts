@@ -152,8 +152,10 @@ export function resolveShot(
     return { goal: true, saved: false, blocked: false, wide: false };
   }
 
-  // Split the misses: blocked if under pressure, wide if angle/distance poor
-  const blockP = clamp(14 + pressure * 25 + (angle > 0.6 ? 6 : 0), 5, 45);
+  // A block requires actual defensive pressure. The simulator validates the
+  // defender against the shot corridor as well, so an unopposed miss can never
+  // invent a touch and turn a goal kick into a corner.
+  const blockP = clamp(pressure * 36 + (angle > 0.6 ? pressure * 7 : 0), 0, 45);
   const longAccuracy = isLongRange
     ? (shooter.longShots - 10) * 1.1 + (shooter.technique - 10) * 0.55 +
       (has(shooter, PlaystyleTag.LongShotSpecialist) ? 5 : 0)

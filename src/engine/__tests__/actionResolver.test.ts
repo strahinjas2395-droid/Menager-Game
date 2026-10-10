@@ -94,6 +94,15 @@ describe("actionResolver", () => {
     expect(badGoals / N).toBeLessThan(0.06);
   });
 
+  it("never invents a defensive block when the shooter has no physical pressure", () => {
+    const rng = new SeededRNG(41);
+    const shooter = P({ finishing: 10, composure: 10, longShots: 10 });
+    const keeper = P({ reflexes: 12, shotStopping: 12, communication: 12 });
+    for (let i = 0; i < 2000; i++) {
+      expect(resolveShot(shooter, keeper, 22, 0.45, 0, rng).blocked).toBe(false);
+    }
+  });
+
   it("resolvePenalty respects taker and keeper quality (single roll)", () => {
     const rng = new SeededRNG(9);
     const goodGk = P({ reflexes: 18, oneOnOnes: 18 });

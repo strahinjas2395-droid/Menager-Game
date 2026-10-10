@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   MatchSimulator,
+  PLAYER_RUNOFF_X,
+  PLAYER_RUNOFF_Y,
   assignTacticalNumbers,
   buildTeamSide,
   getAICoachProfile,
@@ -104,6 +106,7 @@ interface SimulatorTestPlayer {
   roleAssignment: PlayerRoleAssignment;
   intent: string;
   runUntil: number;
+  energy: number;
   sentOff: boolean;
 }
 
@@ -113,13 +116,35 @@ interface SimulatorTestHarness {
   ball: { x: number; y: number };
   decisionCd: number;
   carrier: { side: "home" | "away"; i: number } | null;
-  setPiece: { kind: string; side: "home" | "away"; takerIdx: number; timer: number } | null;
+  flight: {
+    kind: string;
+    side: "home" | "away";
+    toX: number;
+    toY: number;
+    movementPattern?: string;
+    runoffRoute?: { outsideX: number; outsideY: number; reentryX: number; reentryY: number; stage: string };
+  } | null;
+  setPiece: { kind: string; side: "home" | "away"; x: number; y: number; takerIdx: number; timer: number } | null;
   penaltyState: { side: "home" | "away"; takerIdx: number; timer: number } | null;
   giveBallTo: (side: "home" | "away", index: number) => void;
   movePlayer: (player: SimulatorTestPlayer, dt: number, intensity: number) => void;
+  tickMovement: (dt: number, frozen: boolean) => void;
   startSetPiece: (kind: "corner" | "throw" | "freeKick" | "goalKick", side: "home" | "away", x: number, y: number) => void;
   startPenalty: (side: "home" | "away") => void;
   executeKnockOn: (side: "home" | "away", player: SimulatorTestPlayer, attempted: boolean, defenderId?: string) => void;
+  resolveShotArrival: (flight: {
+    kind: "shot";
+    side: "home" | "away";
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    t: number;
+    dur: number;
+    passerId?: string;
+    defenderTouchId?: string;
+    shotOutcome: { goal: boolean; saved: boolean; blocked: boolean; wide: boolean };
+  }) => void;
   receivePass: (side: "home" | "away", receiverIndex: number, flight: {
     fromX: number; fromY: number; toX: number; toY: number; dur: number; countsAsPass?: boolean;
   }) => void;
@@ -201,10 +226,10 @@ describe("MatchSimulator", () => {
     }
 
     for (const pos of state.homePositions) {
-      expect(pos.x).toBeGreaterThanOrEqual(-5);
-      expect(pos.x).toBeLessThanOrEqual(1005);
-      expect(pos.y).toBeGreaterThanOrEqual(-5);
-      expect(pos.y).toBeLessThanOrEqual(655);
+      expect(pos.x).toBeGreaterThanOrEqual(-PLAYER_RUNOFF_X);
+      expect(pos.x).toBeLessThanOrEqual(1000 + PLAYER_RUNOFF_X);
+      expect(pos.y).toBeGreaterThanOrEqual(-PLAYER_RUNOFF_Y);
+      expect(pos.y).toBeLessThanOrEqual(650 + PLAYER_RUNOFF_Y);
     }
   });
 
@@ -554,6 +579,66 @@ describe("MatchSimulator", () => {
     expect(state.ball.mode).toBe("flight");
     expect(state.ball.x).toBeGreaterThan(state.homePositions[runnerIndex].x + 5);
     expect(state.homePositions[runnerIndex].intent).toBe("runBehind");
+  });
+
+  it("occasionally routes a pace specialist through the visible runoff while the knocked ball stays in play", () => {
+    const { sim, home } = setup(60031);
+    const internal = simulatorHarness(sim);
+    const runnerIndex = Math.max(0, home.roles.findIndex((role) => ["RW", "LW", "ST"].includes(role)));
+    const runner = internal.homePlayers[runnerIndex];
+    const defender = internal.awayPlayers.find((player) => player.role !== "GK")!;
+    Object.assign(runner.p, {
+      pace: 20,
+      acceleration: 20,
+      dribbling: 18,
+      playstyles: [PlaystyleTag.PaceAbuser],
+    });
+    runner.x = 420;
+    runner.y = 42;
+    runner.tx = runner.x;
+    runner.ty = runner.y;
+    runner.vx = 55;
+    runner.vy = 0;
+    defender.x = 455;
+    defender.y = 44;
+    defender.tx = defender.x;
+    defender.ty = defender.y;
+    Object.assign(defender.p, { pace: 3, acceleration: 3, anticipation: 5 });
+    internal.awayPlayers.filter((player) => player !== defender).forEach((player, index) => {
+      player.x = 760;
+      player.y = 160 + index * 32;
+      player.tx = player.x;
+      player.ty = player.y;
+    });
+    internal.homePlayers.filter((player) => player !== runner).forEach((player, index) => {
+      player.x = 220;
+      player.y = 120 + index * 35;
+      player.tx = player.x;
+      player.ty = player.y;
+    });
+
+    sim.phase = "open";
+    internal.giveBallTo("home", runnerIndex);
+    internal.executeKnockOn("home", runner, true, defender.p.id);
+    expect(internal.flight?.movementPattern).toBe("touchlineSlingshot");
+    expect(internal.flight?.runoffRoute?.outsideY).toBeLessThan(0);
+    expect(internal.flight?.toY).toBeGreaterThan(0);
+
+    let minimumRunnerY = runner.y;
+    let ballStayedIn = true;
+    let reentered = false;
+    for (let tick = 0; tick < 180 && internal.flight; tick++) {
+      sim.tick(0.05);
+      const state = sim.getState();
+      minimumRunnerY = Math.min(minimumRunnerY, state.homePositions[runnerIndex].y);
+      ballStayedIn = ballStayedIn && state.ball.y >= 0 && state.ball.y <= 650;
+      if (minimumRunnerY < 0 && state.homePositions[runnerIndex].y >= 8) reentered = true;
+    }
+
+    expect(minimumRunnerY).toBeLessThan(0);
+    expect(reentered).toBe(true);
+    expect(ballStayedIn).toBe(true);
+    expect(internal.carrier).toEqual({ side: "home", i: runnerIndex });
   });
 
   it("turns a won dribble into a lateral body-and-ball route around the defender", () => {
@@ -959,6 +1044,114 @@ describe("MatchSimulator", () => {
     expect(directlyConverging.length).toBeLessThanOrEqual(3);
   });
 
+  it("turns the pressing slider into contrasting closing movement, block height and energy cost", () => {
+    const run = (pressing: PressingIntensity) => {
+      const { sim, home, away } = setup(9620);
+      away.tactics.pressing = pressing;
+      const internal = simulatorHarness(sim);
+      const carrierIndex = Math.max(0, home.roles.findIndex((role) => role !== "GK"));
+      const carrier = internal.homePlayers[carrierIndex];
+      carrier.x = 500;
+      carrier.y = 325;
+      carrier.tx = carrier.x;
+      carrier.ty = carrier.y;
+      const outfield = internal.awayPlayers.filter((player) => player.role !== "GK");
+      outfield.forEach((player, index) => {
+        const angle = (index / outfield.length) * Math.PI * 2;
+        player.x = 500 + Math.cos(angle) * 185;
+        player.y = 325 + Math.sin(angle) * 185;
+        player.tx = player.x;
+        player.ty = player.y;
+        player.vx = 0;
+        player.vy = 0;
+      });
+      internal.giveBallTo("home", carrierIndex);
+      internal.ball.x = carrier.x;
+      internal.ball.y = carrier.y;
+      internal.tickMovement(0.1, false);
+      const directPressers = outfield.filter((player) => player.intent === "press").length;
+      const averageTargetX = outfield.reduce((sum, player) => sum + player.tx, 0) / outfield.length;
+      for (let step = 0; step < 80; step++) {
+        carrier.x = 500;
+        carrier.y = 325;
+        internal.ball.x = 500;
+        internal.ball.y = 325;
+        internal.tickMovement(0.1, false);
+      }
+      return {
+        directPressers,
+        averageTargetX,
+        averageEnergy: outfield.reduce((sum, player) => sum + player.energy, 0) / outfield.length,
+      };
+    };
+
+    const noPress = run(PressingIntensity.None);
+    const extreme = run(PressingIntensity.Extreme);
+    expect(noPress.directPressers).toBe(0);
+    expect(extreme.directPressers).toBe(2);
+    expect(extreme.averageTargetX).toBeLessThan(noPress.averageTargetX - 25);
+    expect(extreme.averageEnergy).toBeLessThan(noPress.averageEnergy);
+  });
+
+  it("makes Park the Bus retreat every outfielder into its own half and press only inside the low block", () => {
+    const { sim, home, away } = setup(9621);
+    home.tactics.playStyle = PlayStyle.ParkTheBus;
+    home.tactics.pressing = PressingIntensity.Extreme;
+    const internal = simulatorHarness(sim);
+    const awayCarrierIndex = Math.max(0, away.roles.findIndex((role) => role !== "GK"));
+    const awayCarrier = internal.awayPlayers[awayCarrierIndex];
+    awayCarrier.x = 760;
+    awayCarrier.y = 325;
+    awayCarrier.tx = awayCarrier.x;
+    awayCarrier.ty = awayCarrier.y;
+    internal.homePlayers.filter((player) => player.role !== "GK").forEach((player, index) => {
+      player.x = 610 + (index % 3) * 28;
+      player.y = 70 + index * 48;
+      player.tx = player.x;
+      player.ty = player.y;
+      player.vx = 0;
+      player.vy = 0;
+    });
+    internal.giveBallTo("away", awayCarrierIndex);
+    internal.ball.x = awayCarrier.x;
+    internal.ball.y = awayCarrier.y;
+
+    internal.tickMovement(0.1, false);
+    const homeOutfield = internal.homePlayers.filter((player) => player.role !== "GK");
+    expect(homeOutfield.every((player) => player.tx <= 488)).toBe(true);
+    expect(homeOutfield.every((player) => player.intent !== "press")).toBe(true);
+    expect(homeOutfield.every((player) => player.intent === "recover")).toBe(true);
+
+    // Retreat is movement, not teleportation; after enough physical time all
+    // ten outfielders have crossed back over halfway.
+    for (let step = 0; step < 150; step++) {
+      awayCarrier.x = 760;
+      awayCarrier.y = 325;
+      internal.ball.x = 760;
+      internal.ball.y = 325;
+      internal.tickMovement(0.1, false);
+    }
+    expect(homeOutfield.every((player) => player.x <= 500)).toBe(true);
+
+    // Once the opponent enters the home half, the block is allowed to engage,
+    // while retaining the universal own-half destination and two-presser cap.
+    awayCarrier.x = 260;
+    awayCarrier.y = 325;
+    internal.ball.x = 260;
+    internal.ball.y = 325;
+    homeOutfield.forEach((player, index) => {
+      player.x = 285 + (index % 2) * 35;
+      player.y = 170 + index * 30;
+      player.tx = player.x;
+      player.ty = player.y;
+    });
+    internal.tickMovement(0.1, false);
+    const lowBlockPressers = homeOutfield.filter((player) => player.intent === "press");
+    expect(lowBlockPressers.length).toBeGreaterThan(0);
+    expect(lowBlockPressers.length).toBeLessThanOrEqual(2);
+    expect(homeOutfield.every((player) => player.tx <= 488)).toBe(true);
+  });
+
   it("makes an exact tight marker approach the named opponent measurably closer and from the requested side", () => {
     const run = (planned: boolean) => {
       const built = setup(9631);
@@ -1166,11 +1359,57 @@ describe("MatchSimulator", () => {
     expect(instructed.runUntil).toBeGreaterThan(baseline.runUntil);
   });
 
+  it("awards an untouched wide shot as a goal kick and only an exact defender touch as a corner", () => {
+    const untouchedGame = setup(969);
+    const untouched = simulatorHarness(untouchedGame.sim);
+    const shooter = untouched.homePlayers.find((player) => player.role !== "GK")!;
+    untouched.resolveShotArrival({
+      kind: "shot",
+      side: "home",
+      fromX: 820,
+      fromY: 210,
+      toX: 1045,
+      toY: 215,
+      t: 1,
+      dur: 0.7,
+      passerId: shooter.p.id,
+      shotOutcome: { goal: false, saved: false, blocked: false, wide: true },
+    });
+    expect(untouched.setPiece).toMatchObject({ kind: "goalKick", side: "away" });
+    expect(untouchedGame.sim.getStats().cornersHome).toBe(0);
+    expect(untouchedGame.sim.getEvents().at(-1)?.type).toBe(MatchEventType.GoalKick);
+
+    const deflectedGame = setup(969);
+    const deflected = simulatorHarness(deflectedGame.sim);
+    const deflectedShooter = deflected.homePlayers.find((player) => player.role !== "GK")!;
+    const blocker = deflected.awayPlayers.find((player) => player.role !== "GK")!;
+    deflected.resolveShotArrival({
+      kind: "shot",
+      side: "home",
+      fromX: 820,
+      fromY: 210,
+      toX: 1018,
+      toY: 215,
+      t: 1,
+      dur: 0.7,
+      passerId: deflectedShooter.p.id,
+      defenderTouchId: blocker.p.id,
+      shotOutcome: { goal: false, saved: false, blocked: true, wide: false },
+    });
+    expect(deflected.setPiece).toMatchObject({ kind: "corner", side: "home" });
+    expect(deflectedGame.sim.getStats().cornersHome).toBe(1);
+  });
+
   it("builds dedicated corner, throw-in, free-kick and goal-kick shapes", () => {
     const cornerGame = setup(970);
     const cornerInternal = simulatorHarness(cornerGame.sim);
     const nominated = cornerGame.home.starters.findIndex((p, i) => cornerGame.home.roles[i] !== "GK");
     cornerGame.home.tactics.setPieces.cornerLeftId = cornerGame.home.starters[nominated].id;
+    const nominatedTaker = cornerInternal.homePlayers[nominated];
+    nominatedTaker.x = 300;
+    nominatedTaker.y = 325;
+    nominatedTaker.vx = 0;
+    nominatedTaker.vy = 0;
     cornerInternal.startSetPiece("corner", "home", 992, 5);
     expect(cornerInternal.setPiece?.takerIdx).toBe(nominated);
     expect(cornerGame.sim.getStats().cornersHome).toBe(1);
@@ -1181,13 +1420,26 @@ describe("MatchSimulator", () => {
       .sort((a, b) => b.score - a.score)[0];
     expect(aerialRunner.p.tx).toBeGreaterThan(820);
     expect(aerialRunner.p.ty).toBeGreaterThan(150);
-    for (let i = 0; i < 100; i++) cornerGame.sim.tick(0.1);
+
+    // The old fixed timer fired while this nominated player was still tens of
+    // metres away. The restart now waits and visibly moves that exact player.
+    for (let i = 0; i < 80; i++) cornerGame.sim.tick(0.1);
+    expect(cornerInternal.setPiece?.kind).toBe("corner");
+    expect(cornerGame.sim.getStats().crossesHome).toBe(0);
+    expect(nominatedTaker.x).toBeGreaterThan(300);
+
+    for (let i = 0; i < 420 && cornerInternal.setPiece; i++) cornerGame.sim.tick(0.1);
+    expect(cornerInternal.setPiece).toBeNull();
+    expect(nominatedTaker.x).toBeGreaterThan(995);
+    expect(nominatedTaker.y).toBeLessThan(0);
     expect(cornerGame.sim.getStats().crossesHome).toBeGreaterThanOrEqual(1);
 
     const throwGame = setup(971);
     const throwInternal = simulatorHarness(throwGame.sim);
     throwInternal.startSetPiece("throw", "home", 500, 5);
     throwGame.sim.tick(0.1);
+    const throwTaker = throwInternal.homePlayers[throwInternal.setPiece!.takerIdx];
+    expect(throwTaker.ty).toBeLessThan(0);
     const throwOptions = throwInternal.homePlayers.filter(
       (p, i) => i !== throwInternal.setPiece?.takerIdx && p.tx > 430 && p.tx < 610 && p.ty < 145,
     );
@@ -1227,7 +1479,7 @@ describe("MatchSimulator", () => {
       .filter((p) => p.role !== "GK" && p !== internal.homePlayers[striker]);
     expect(playersOutsideArea.every((p) => p.tx <= 820)).toBe(true);
 
-    for (let i = 0; i < 100; i++) sim.tick(0.1);
+    for (let i = 0; i < 400 && sim.getStats().shotsHome === 0; i++) sim.tick(0.1);
     expect(sim.getStats().shotsHome).toBe(1);
     expect(sim.getEvents().some((e) => e.type === "PenaltyGoal" || e.type === "PenaltyMissed")).toBe(true);
   });

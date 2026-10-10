@@ -16,6 +16,14 @@ describe("live match pitch geometry", () => {
     expect(MATCH_PITCH_VIEW.rightGoalBack).toBeLessThanOrEqual(MATCH_PITCH_VIEW.viewWidth);
   });
 
+  it("provides visible runoff beyond all four touch and goal lines", () => {
+    expect(MATCH_PITCH_VIEW.pitchLeft).toBeGreaterThanOrEqual(44);
+    expect(MATCH_PITCH_VIEW.viewWidth - MATCH_PITCH_VIEW.pitchRight).toBeGreaterThanOrEqual(44);
+    expect(MATCH_PITCH_VIEW.pitchTop).toBeGreaterThanOrEqual(40);
+    expect(MATCH_PITCH_VIEW.viewHeight - MATCH_PITCH_VIEW.pitchBottom).toBeGreaterThanOrEqual(40);
+    expect(MATCH_PITCH_VIEW.horizontalRunoff).toBeGreaterThan(MATCH_PITCH_VIEW.goalDepth);
+  });
+
   it("keeps markers small relative to the full-size pitch", () => {
     expect(MATCH_MARKER_GEOMETRY.playerDiameterMetres).toBeLessThanOrEqual(1.2);
     expect(MATCH_MARKER_GEOMETRY.playerRadius * 2).toBeLessThan(15);

@@ -56,6 +56,7 @@ import { getIconicPrimeProfile } from "@/engine/iconicPrimeProfiles";
 import { mergeDirectives, type PlayerDirectives } from "@/engine/directives";
 import { buildAIOpponentMatchPlan, sanitizeOpponentMatchPlan } from "@/engine/matchPlan";
 import { MATCH_TIME_SCALE } from "@/engine/matchClock";
+import { pressingBehavior } from "@/engine/pressing";
 import { buildTacticalAnalytics, expectedGoalsAt } from "@/engine/tacticalAnalytics";
 import {
   isPlayerAvailable,
@@ -89,6 +90,14 @@ import {
 export const PITCH_W = 1000;
 export const PITCH_H = 650;
 export const UNITS_PER_METER = 10;
+/**
+ * Players may enter this small visible apron only for a physical restart or a
+ * deliberate touchline slingshot. The ball remains governed by the field laws.
+ */
+export const PLAYER_RUNOFF_X = 28;
+export const PLAYER_RUNOFF_Y = 32;
+/** Slightly brisker physical action while the match clock remains fixed at eight-minute halves. */
+export const DEFAULT_WORLD_SCALE = 0.58;
 
 export type Side = "home" | "away";
 
@@ -132,8 +141,8 @@ export interface SimOptions {
   /** Career difficulty controls opposition observation, reaction and decision quality. */
   difficulty?: Difficulty;
   /**
-   * World/movement seconds per real second (default 0.5). Decoupling it from
-   * the fixed match clock preserves calibrated action density over each half.
+   * World/movement seconds per real second (default 0.58). Decoupling it from
+   * the fixed match clock preserves eight-minute halves while keeping play brisk.
    */
   worldScale?: number;
 }
@@ -274,6 +283,16 @@ export function iconicPassFlavorBias(player: Player, flavor: PassFlavor, risky =
   return bias;
 }
 
+interface TouchlineRunoffRoute {
+  /** First waypoint: the runner goes around the defender outside the touchline. */
+  outsideX: number;
+  outsideY: number;
+  /** Second waypoint: the runner comes back onto the field beside the ball. */
+  reentryX: number;
+  reentryY: number;
+  stage: "outside" | "reentry";
+}
+
 interface Flight {
   kind: "pass" | "shot" | "cross" | "knockOn";
   fromX: number;
@@ -295,8 +314,12 @@ interface Flight {
   challengedIds?: string[];
   dribbleAttempt?: boolean;
   beatDefenderId?: string;
+  /** Exact defender who physically changed a shot's path. */
+  defenderTouchId?: string;
+  /** Body route used while the ball stays legally inside the touchline. */
+  runoffRoute?: TouchlineRunoffRoute;
   /** Structured qualifier for the physical route used to knock the ball on. */
-  movementPattern?: DribblePattern;
+  movementPattern?: DribblePattern | "touchlineSlingshot";
   countsAsPass?: boolean;
   penalty?: boolean;
   analyticsType?: TacticalEventType;
@@ -579,7 +602,7 @@ export class MatchSimulator {
     this.rng = new SeededRNG(options.seed);
     this.injuryRng = new SeededRNG((options.seed ^ 0x49a71c) >>> 0);
     this.nextInjuryCheckAt = this.injuryRng.float(6, 12) * 60;
-    this.worldScale = options.worldScale ?? 0.5;
+    this.worldScale = options.worldScale ?? DEFAULT_WORLD_SCALE;
     this.difficulty = options.difficulty ?? Difficulty.SemiPro;
     this.coachProfile = getAICoachProfile(this.difficulty);
     this.initialFormations = {
@@ -1728,9 +1751,18 @@ export class MatchSimulator {
 
       const mentality = tactics.mentality ?? MentalityLevel.Balanced;
       const line = tactics.defensiveLine ?? DefensiveLine.Normal;
-      let pressing = tactics.pressing ?? PressingIntensity.Standard;
-      if (gegen) pressing = Math.max(pressing, PressingIntensity.High);
-      if (park) pressing = Math.min(pressing, PressingIntensity.Low);
+      // The explicit slider always wins. Play styles may shape a transition,
+      // but must never silently turn the manager's Extreme press into Low.
+      const selectedPressing = tactics.pressing ?? PressingIntensity.Standard;
+      const teamPressHard = Boolean(team.teamDirectives?.pressHard);
+      const effectivePressing = teamPressHard
+        ? Math.max(selectedPressing, PressingIntensity.High) as PressingIntensity
+        : selectedPressing;
+      const pressBehavior = pressingBehavior(effectivePressing);
+      const ballInOwnHalf = side === "home" ? this.ball.x <= PITCH_W / 2 : this.ball.x >= PITCH_W / 2;
+      // Park the Bus may still attack the carrier inside its low block, but it
+      // never counter-presses or sends a forward into the opposition half.
+      const counterPressActive = !park && justLost && effectivePressing !== PressingIntensity.None;
 
       const players = this.players(side);
       const brainTeammates: BrainAgent[] = players
@@ -1801,28 +1833,54 @@ export class MatchSimulator {
           hasPlaystyle(a.sp.p, PlaystyleTag.BallWinner) ? 35 : 0;
         const bTrait = hasPlaystyle(b.sp.p, PlaystyleTag.PressingForward) ? 90 :
           hasPlaystyle(b.sp.p, PlaystyleTag.BallWinner) ? 35 : 0;
-        const ad = a.d - (aDirective.pressHard ? 120 : aDirective.defensiveDuty ? 65 : 0) - aTrait +
+        const ad = a.d - (aDirective.pressHard ? 120 : aDirective.defensiveDuty ? 30 : 0) - aTrait +
           (aDirective.pressLess ? 240 : 0) + planPressAdjustment(a.sp);
-        const bd = b.d - (bDirective.pressHard ? 120 : bDirective.defensiveDuty ? 65 : 0) - bTrait +
+        const bd = b.d - (bDirective.pressHard ? 120 : bDirective.defensiveDuty ? 30 : 0) - bTrait +
           (bDirective.pressLess ? 240 : 0) + planPressAdjustment(b.sp);
         return ad - bd;
       });
-      // One player engages and, at high intensity, one supports. Team-wide
-      // "press hard" raises urgency and prioritises players; it must never
-      // bypass this assignment and send four or more dots onto the carrier.
-      // Gegenpressing changes who/when, not the physical number able to tackle.
-      let pressCount = pressing === PressingIntensity.None
-        ? 0
-        : pressing >= PressingIntensity.High || gegen || justLost
-          ? 2
-          : 1;
+      const eligiblePressOrder = pressOrder.filter(({ sp }) => {
+        const directive = this.directives(side, sp);
+        return !directive.pressLess && !directive.conserveEnergy;
+      });
+
+      // At most two players attack the carrier. Higher levels become visibly
+      // more aggressive by engaging from farther away and sending additional
+      // teammates to shut nearby passing lanes, not by creating a ten-man swarm.
+      let pressCount: number = pressBehavior.directPressers;
+      let outletMarkerCount: number = pressBehavior.outletMarkers;
+      if (counterPressActive) {
+        pressCount = Math.max(pressCount, 2);
+        outletMarkerCount = Math.max(outletMarkerCount, gegen ? 4 : 2);
+      }
       if (receptionPlan?.pressing === "pressOnReceive") {
         pressCount = receptionPlan.doubleTeam ? 2 : Math.max(1, pressCount);
       } else if (receptionPlan?.pressing === "standOff") {
         pressCount = 0;
+        outletMarkerCount = 0;
+      }
+      if (park && !ballInOwnHalf) {
+        pressCount = 0;
+        outletMarkerCount = 0;
       }
       pressCount = Math.min(2, pressCount);
-      const pressers = new Set(pressOrder.slice(0, pressCount).map((o) => o.i));
+      outletMarkerCount = Math.min(
+        4,
+        Math.max(0, eligiblePressOrder.length - pressCount),
+        outletMarkerCount,
+      );
+      const directAssignments = eligiblePressOrder.slice(0, pressCount);
+      const outletAssignments = eligiblePressOrder.slice(pressCount, pressCount + outletMarkerCount);
+      const presserRanks = new Map(directAssignments.map((assignment, rank) => [assignment.i, rank]));
+      const outletMarkerRanks = new Map(outletAssignments.map((assignment, rank) => [assignment.i, rank]));
+      const nearbyOutlets = oppositionCarrier
+        ? brainOpponents
+            .filter((opponent) => opponent.id !== oppositionCarrier.p.id && opponent.role !== "GK")
+            .sort((a, b) =>
+              Math.hypot(a.x - oppositionCarrier.x, a.y - oppositionCarrier.y) -
+              Math.hypot(b.x - oppositionCarrier.x, b.y - oppositionCarrier.y),
+            )
+        : [];
 
       players.forEach((sp, i) => {
         if (sp.sentOff) return;
@@ -1887,12 +1945,24 @@ export class MatchSimulator {
           this.flight.side === side &&
           this.flight.targetIdx === i
         ) {
-          sp.tx = this.flight.toX;
-          sp.ty = this.flight.toY;
+          const runoff = this.flight.runoffRoute;
+          if (runoff) {
+            if (
+              runoff.stage === "outside" &&
+              Math.hypot(sp.x - runoff.outsideX, sp.y - runoff.outsideY) <= 16
+            ) {
+              runoff.stage = "reentry";
+            }
+            sp.tx = runoff.stage === "outside" ? runoff.outsideX : runoff.reentryX;
+            sp.ty = runoff.stage === "outside" ? runoff.outsideY : runoff.reentryY;
+          } else {
+            sp.tx = this.flight.toX;
+            sp.ty = this.flight.toY;
+          }
           const isRace = this.flight.kind === "knockOn" || this.flight.flavor === "through";
           sp.intent = isRace ? "runBehind" : "receive";
-          this.drainEnergy(sp, dt, isRace ? 1.35 : this.flight.kind === "cross" ? 1.05 : 0.85);
-          this.movePlayer(sp, dt, isRace ? 1 : this.flight.kind === "cross" ? 0.82 : 0.56);
+          this.drainEnergy(sp, dt, runoff ? 1.62 : isRace ? 1.35 : this.flight.kind === "cross" ? 1.05 : 0.85);
+          this.movePlayer(sp, dt, runoff ? 1.05 : isRace ? 1 : this.flight.kind === "cross" ? 0.82 : 0.56);
           return;
         }
 
@@ -1955,8 +2025,12 @@ export class MatchSimulator {
         let ty = 325 + (base.y - 325) * widthF;
         const lineShift = (line - DefensiveLine.Normal) * 24;
         const mentalityShift = (mentality - MentalityLevel.Balanced) * 13;
-        const ballShiftX = (this.ball.x - 500) * (possessionStyle ? 0.12 : 0.16);
-        const ballShiftY = (this.ball.y - 325) * (possessionStyle || park ? 0.26 : 0.34);
+        const ballShiftX = (this.ball.x - 500) * (hasBall
+          ? (possessionStyle ? 0.12 : 0.16)
+          : pressBehavior.ballShiftX);
+        const ballShiftY = (this.ball.y - 325) * (hasBall
+          ? (possessionStyle || park ? 0.26 : 0.34)
+          : pressBehavior.ballShiftY);
 
         if (hasBall) {
           const advanceByLine =
@@ -1966,14 +2040,22 @@ export class MatchSimulator {
           tx += dir * (advanceByLine + mentalityShift + ballShiftX);
           ty += ballShiftY;
         } else {
-          const block = park ? -75 : directStyle ? -34 : gegen ? 18 : -18;
+          const styleBlock = park ? -75 : directStyle ? -34 : gegen ? 18 : -18;
           const lineFactor = roleLine === "DEF" ? 1 : roleLine === "MID" ? 0.72 : 0.38;
-          tx += dir * (block + lineShift * lineFactor + mentalityShift * 0.35 + ballShiftX);
+          tx += dir * (
+            styleBlock + pressBehavior.blockAdvance + lineShift * lineFactor +
+            mentalityShift * 0.35 + ballShiftX
+          );
           ty += ballShiftY;
-          // Compact vertical distances between the three outfield lines.
-          if (park || possessionStyle || gegen) {
-            const centreX = side === "home" ? 360 : 640;
-            tx += (centreX - tx) * (park ? 0.14 : 0.08);
+          // Compact vertical distances between the three outfield lines. High
+          // pressure shifts that connected centre forward instead of moving
+          // only the two dots nearest the ball.
+          if (park || possessionStyle || gegen || effectivePressing >= PressingIntensity.High) {
+            const centreX = (side === "home" ? 360 : 640) + dir * pressBehavior.blockAdvance * 0.48;
+            const compactness = effectivePressing === PressingIntensity.Extreme
+              ? 0.14
+              : park ? 0.14 : effectivePressing === PressingIntensity.High ? 0.11 : 0.08;
+            tx += (centreX - tx) * compactness;
           }
         }
 
@@ -2157,19 +2239,60 @@ export class MatchSimulator {
           sp.intent = "mark";
         }
 
-        // Defensive actions: a designated set presses; everyone else protects
-        // the formation. Gegenpressing activates immediately after losing it.
+        // Direct pressure attacks the carrier from goal-side angles. The old
+        // interpolation stopped several metres short, so players looked busy
+        // but often never reached tackling distance.
+        const presserRank = presserRanks.get(i);
+        const engagementRadius = Math.max(
+          pressBehavior.engagementRadius,
+          directive.pressHard ? 340 : 0,
+          directive.defensiveDuty ? 235 : 0,
+          counterPressActive ? (gegen ? 430 : 340) : 0,
+          receptionPlan?.pressing === "pressOnReceive" ? 360 : 0,
+        );
+        const playerInOwnHalf = side === "home" ? sp.x <= PITCH_W / 2 : sp.x >= PITCH_W / 2;
         const isPresser = !hasBall &&
-          pressers.has(i) &&
-          !directive.pressLess &&
-          !directive.conserveEnergy &&
-          (Math.hypot(sp.x - this.ball.x, sp.y - this.ball.y) <
-            (directive.pressHard ? 260 : directive.defensiveDuty ? 235 : justLost ? 260 : 205));
+          (!park || (ballInOwnHalf && playerInOwnHalf)) &&
+          presserRank !== undefined &&
+          Math.hypot(sp.x - this.ball.x, sp.y - this.ball.y) < engagementRadius;
+
+        const outletRank = outletMarkerRanks.get(i);
+        const outletTarget = outletRank !== undefined && nearbyOutlets.length > 0
+          ? nearbyOutlets[outletRank % nearbyOutlets.length]
+          : undefined;
+        const isOutletMarker = !hasBall && Boolean(oppositionCarrier && outletTarget);
+
+        if (isOutletMarker && oppositionCarrier && outletTarget) {
+          // Occupy the pass lane rather than piling another body onto the ball.
+          const laneDepth = effectivePressing === PressingIntensity.Extreme ? 0.62 :
+            effectivePressing === PressingIntensity.High ? 0.55 : 0.48;
+          let laneX = oppositionCarrier.x + (outletTarget.x - oppositionCarrier.x) * laneDepth - dir * 9;
+          let laneY = oppositionCarrier.y + (outletTarget.y - oppositionCarrier.y) * laneDepth;
+          const laneDx = laneX - oppositionCarrier.x;
+          const laneDy = laneY - oppositionCarrier.y;
+          const laneDistance = Math.hypot(laneDx, laneDy);
+          // Preserve at least 10.5 m around the carrier so only the two direct
+          // assignments can make an immediate challenge; these players visibly
+          // close passing routes rather than forming an unrealistic swarm.
+          if (laneDistance < 105) {
+            const fallbackAngle = ((outletRank ?? 0) + 1) * (Math.PI * 2 / Math.max(4, outletMarkerCount));
+            const nx = laneDistance > 0 ? laneDx / laneDistance : Math.cos(fallbackAngle);
+            const ny = laneDistance > 0 ? laneDy / laneDistance : Math.sin(fallbackAngle);
+            laneX = oppositionCarrier.x + nx * 105;
+            laneY = oppositionCarrier.y + ny * 105;
+          }
+          tx = laneX;
+          ty = laneY;
+          sp.intent = "mark";
+        }
+
         if (isPresser) {
-          const urgency = gegen || pressing >= PressingIntensity.High ? 0.9 : 0.73;
-          tx += (this.ball.x - tx) * urgency;
-          ty += (this.ball.y - ty) * urgency;
-        } else if (!hasBall && directive.tightMarking) {
+          const chase = oppositionCarrier ?? this.ball;
+          const secondAngle = presserRank === 0 ? 0 : (sp.y <= chase.y ? -18 : 18);
+          tx = chase.x - dir * (presserRank === 0 ? 8 : 16);
+          ty = chase.y + secondAngle;
+          sp.intent = "press";
+        } else if (!isOutletMarker && !hasBall && directive.tightMarking) {
           const mark = this.closestOpponent(side, sp);
           if (mark) {
             // Goal-side shoulder, not directly on top of the opponent.
@@ -2182,7 +2305,7 @@ export class MatchSimulator {
         // offering a safe angle, overlapping, running behind, covering and
         // marking. It remains anchored to the formation calculation above,
         // so eleven independent players still behave as a connected team.
-        if (!isPresser && this.worldTime >= sp.brainNextAt) {
+        if (!isPresser && !isOutletMarker && this.worldTime >= sp.brainNextAt) {
           const carrierPlayer = this.carrier?.side === side
             ? players[this.carrier.i]
             : null;
@@ -2216,12 +2339,10 @@ export class MatchSimulator {
           // Better decision-makers scan and update a little more frequently.
           sp.brainNextAt = this.worldTime + clamp(0.58 - sp.p.decisions * 0.014, 0.28, 0.56);
         }
-        if (!isPresser) {
+        if (!isPresser && !isOutletMarker) {
           const brainWeight = hasBall ? 0.58 : 0.34;
           tx = tx * (1 - brainWeight) + sp.brainTx * brainWeight;
           ty = ty * (1 - brainWeight) + sp.brainTy * brainWeight;
-        } else {
-          sp.intent = "press";
         }
 
         // In loose-ball situations the nearest player from each side attacks
@@ -2231,18 +2352,42 @@ export class MatchSimulator {
           ty = this.ball.y;
         }
 
+        const parkRetreating = park && !hasBall && !playerInOwnHalf;
+        if (park && !hasBall) {
+          // This final law overrides roaming, attack duties, marking plans,
+          // spatial-brain suggestions and loose-ball attraction. Every
+          // outfielder's destination is physically inside the team's own half.
+          tx = side === "home" ? Math.min(tx, 488) : Math.max(tx, 512);
+          if (parkRetreating) sp.intent = "recover";
+        }
+
         sp.tx = clamp(tx, 18, 982);
         sp.ty = clamp(ty, 12, 638);
-        const sprinting = isPresser || sp.runUntil > this.worldTime || (justWon && isForward);
+        const sprinting = parkRetreating || isPresser || sp.runUntil > this.worldTime || (justWon && isForward);
         const activeRun = hasBall && [
           "runBehind", "overlap", "underlap", "comeShort", "crossReceiver", "giveAndGo", "pullWide",
         ].includes(sp.intent);
-        this.drainEnergy(sp, dt, sprinting ? 1.35 : activeRun ? 1.05 : hasBall ? 0.72 : 0.55);
-        this.movePlayer(
-          sp,
-          dt,
-          sprinting ? 1 : activeRun ? 0.76 : directive.conserveEnergy ? 0.16 : hasBall ? 0.2 : 0.22,
-        );
+        const tempo = tactics.tempo ?? TempoSetting.Normal;
+        const possessionShapeIntensity = clamp(0.22 + tempo * 0.035, 0.22, 0.38);
+        const defensiveShapeIntensity = counterPressActive
+          ? Math.max(pressBehavior.shapeIntensity, gegen ? 0.54 : 0.41)
+          : pressBehavior.shapeIntensity;
+        const outletIntensity = counterPressActive
+          ? Math.max(pressBehavior.outletIntensity, gegen ? 0.92 : 0.75)
+          : pressBehavior.outletIntensity;
+        const movementIntensity = sprinting ? 1.05 :
+          isOutletMarker ? outletIntensity :
+          activeRun ? 0.8 :
+          directive.conserveEnergy ? 0.16 :
+          hasBall ? possessionShapeIntensity : defensiveShapeIntensity;
+        const effort = directive.conserveEnergy ? 0.28 :
+          parkRetreating ? 1.2 :
+          isPresser ? 1.48 + effectivePressing * 0.07 :
+          isOutletMarker ? 1.02 + effectivePressing * 0.075 :
+          activeRun ? 1.05 :
+          hasBall ? 0.72 : pressBehavior.defensiveEffort;
+        this.drainEnergy(sp, dt, effort);
+        this.movePlayer(sp, dt, movementIntensity);
       });
     }
   }
@@ -2319,8 +2464,11 @@ export class MatchSimulator {
       sp.y += stepY;
     }
 
-    const clampedX = clamp(sp.x, 8, 992);
-    const clampedY = clamp(sp.y, 8, 642);
+    const usesRunoff =
+      sp.x < 8 || sp.x > 992 || sp.y < 8 || sp.y > 642 ||
+      sp.tx < 8 || sp.tx > 992 || sp.ty < 8 || sp.ty > 642;
+    const clampedX = clamp(sp.x, usesRunoff ? -PLAYER_RUNOFF_X : 8, usesRunoff ? PITCH_W + PLAYER_RUNOFF_X : 992);
+    const clampedY = clamp(sp.y, usesRunoff ? -PLAYER_RUNOFF_Y : 8, usesRunoff ? PITCH_H + PLAYER_RUNOFF_Y : 642);
     if (clampedX !== sp.x) sp.vx = 0;
     if (clampedY !== sp.y) sp.vy = 0;
     sp.x = clampedX;
@@ -2741,6 +2889,53 @@ export class MatchSimulator {
     this.decisionCd = this.decisionDelay(side, sp, 0.7);
   }
 
+  /**
+   * Build the rare Bale-style route only when a genuine touchline duel exists:
+   * a pace specialist knocks the ball legally down the line, runs around the
+   * defender through the apron, then re-enters to contest the same ball.
+   */
+  private touchlineSlingshot(
+    side: Side,
+    runner: SimPlayer,
+    beatDefenderId?: string,
+  ): { toX: number; toY: number; route: TouchlineRunoffRoute } | null {
+    if (!beatDefenderId || !hasPlaystyle(runner.p, PlaystyleTag.PaceAbuser)) return null;
+    const top = runner.y <= 62;
+    const bottom = runner.y >= PITCH_H - 62;
+    if (!top && !bottom) return null;
+
+    const defender = this.players(this.other(side)).find(
+      (candidate) => candidate.p.id === beatDefenderId && !candidate.sentOff,
+    );
+    if (!defender) return null;
+    const dir = this.attackDir(side);
+    const forwardGap = (defender.x - runner.x) * dir;
+    const duelDistance = Math.hypot(defender.x - runner.x, defender.y - runner.y);
+    if (forwardGap < -8 || forwardGap > 78 || duelDistance > 86) return null;
+    if (Math.abs(this.goalX(side) - runner.x) < 185) return null;
+
+    const desiredX = Math.max(
+      67,
+      forwardGap + 38,
+      56 + (runner.p.pace + runner.p.acceleration - 20) * 0.9,
+    );
+    const toX = clamp(runner.x + dir * desiredX, 22, 978);
+    const toY = top ? 18 : PITCH_H - 18;
+    const outsideX = clamp(defender.x + dir * 8, -PLAYER_RUNOFF_X + 2, PITCH_W + PLAYER_RUNOFF_X - 2);
+    const outsideY = top ? -18 : PITCH_H + 18;
+    return {
+      toX,
+      toY,
+      route: {
+        outsideX,
+        outsideY,
+        reentryX: clamp(toX - dir * 8, 10, 990),
+        reentryY: top ? 12 : PITCH_H - 12,
+        stage: "outside",
+      },
+    };
+  }
+
   /** A deliberate longer touch creates a physical race between attacker and cover. */
   private executeKnockOn(
     side: Side,
@@ -2752,6 +2947,7 @@ export class MatchSimulator {
     const idx = this.indexOfPlayer(side, sp);
     const goalDistance = Math.abs(this.goalX(side) - sp.x);
     const paceTrait = hasPlaystyle(sp.p, PlaystyleTag.PaceAbuser);
+    const slingshot = dribbleAttempt ? this.touchlineSlingshot(side, sp, beatDefenderId) : null;
     const routeEnd = plannedRoute.waypoints[plannedRoute.waypoints.length - 1];
     const routeDx = routeEnd.x - sp.x;
     const routeDy = routeEnd.y - sp.y;
@@ -2760,7 +2956,7 @@ export class MatchSimulator {
     // Winning the initial duel does not guarantee enough grass for a long
     // touch. In a crowded lane the attacker uses the same route with close
     // control, leaving cover defenders able to recover and tackle normally.
-    if (dribbleAttempt && plannedRoute.safeKnockOnM < 3.1) {
+    if (dribbleAttempt && plannedRoute.safeKnockOnM < 3.1 && !slingshot) {
       if (side === "home") this.stats.dribblesCompletedHome += 1;
       else this.stats.dribblesCompletedAway += 1;
       this.addPlayerStat(sp.p.id, "dribblesCompleted");
@@ -2791,14 +2987,22 @@ export class MatchSimulator {
       Math.max(3.1, plannedRoute.safeKnockOnM),
     );
     const leadM = clamp(desiredLeadM, 3.1, maximumLeadM);
-    const toX = clamp(sp.x + (routeDx / routeDistance) * leadM * UNITS_PER_METER, 8, 992);
-    const toY = clamp(sp.y + (routeDy / routeDistance) * leadM * UNITS_PER_METER, 8, 642);
+    const toX = slingshot?.toX ?? clamp(sp.x + (routeDx / routeDistance) * leadM * UNITS_PER_METER, 8, 992);
+    const toY = slingshot?.toY ?? clamp(sp.y + (routeDy / routeDistance) * leadM * UNITS_PER_METER, 8, 642);
     const distanceM = Math.hypot(toX - this.ball.x, toY - this.ball.y) / UNITS_PER_METER;
 
     sp.lastKnockOnAt = this.worldTime;
     sp.intent = "carry";
     if (side === "home") this.stats.knockOnsHome += 1;
     else this.stats.knockOnsAway += 1;
+    if (slingshot) {
+      this.pushEvent(
+        MatchEventType.Chance,
+        this.team(side).clubId,
+        sp.p.id,
+        `${sp.p.firstName} ${sp.p.lastName} knocks it down the line and races around the outside!`,
+      );
+    }
     this.launchFlight({
       kind: "knockOn",
       fromX: this.ball.x,
@@ -2806,14 +3010,19 @@ export class MatchSimulator {
       toX,
       toY,
       t: 0,
-      dur: clamp(distanceM / this.rng.float(7.5, 10.8), 0.28, 1.15),
+      // The touchline version is an intentionally longer rolling touch: the
+      // runner has enough physical time to use the apron and re-enter.
+      dur: slingshot
+        ? clamp(distanceM / this.rng.float(2.2, 2.9), 3, 3.7)
+        : clamp(distanceM / this.rng.float(7.5, 10.8), 0.28, 1.15),
       side,
       targetIdx: idx,
       arcH: 0,
       challengedIds: [],
       dribbleAttempt,
       beatDefenderId,
-      movementPattern: plannedRoute.pattern,
+      runoffRoute: slingshot?.route,
+      movementPattern: slingshot ? "touchlineSlingshot" : plannedRoute.pattern,
       passerId: sp.p.id,
     });
     this.lastTouchSide = side;
@@ -3412,6 +3621,31 @@ export class MatchSimulator {
     return "placed";
   }
 
+  /**
+   * Return a real outfield defender whose body intersects the shot corridor.
+   * Pressure alone may hurry a shot, but it cannot manufacture a defensive
+   * touch (and therefore cannot manufacture a corner).
+   */
+  private physicalShotBlocker(side: Side, shooter: SimPlayer, targetY = PITCH_H / 2): SimPlayer | undefined {
+    const goalX = this.goalX(side);
+    const dx = goalX - shooter.x;
+    const dy = targetY - shooter.y;
+    const lengthSq = dx * dx + dy * dy || 1;
+
+    return this.players(this.other(side))
+      .filter((defender) => !defender.sentOff && defender.role !== "GK")
+      .map((defender) => {
+        const projection = ((defender.x - shooter.x) * dx + (defender.y - shooter.y) * dy) / lengthSq;
+        const px = shooter.x + dx * projection;
+        const py = shooter.y + dy * projection;
+        const lateral = Math.hypot(defender.x - px, defender.y - py);
+        const reach = 7.5 + defender.p.anticipation * 0.28 + defender.p.agility * 0.1;
+        return { defender, projection, lateral, reach };
+      })
+      .filter(({ projection, lateral, reach }) => projection > 0.035 && projection < 0.96 && lateral <= reach)
+      .sort((a, b) => a.projection - b.projection || a.lateral - b.lateral)[0]?.defender;
+  }
+
   private executeShot(side: Side, sp: SimPlayer, distM: number): void {
     const defendingSide = this.other(side);
     const gk =
@@ -3426,7 +3660,13 @@ export class MatchSimulator {
     );
     const pressure = this.pressureOn(side, this.indexOfPlayer(side, sp));
     const technique = this.chooseShotTechnique(sp, distM, pressure);
-    const outcome = resolveShot(sp.p, gk.p, distM, angle, pressure, this.rng, technique);
+    const blocker = this.physicalShotBlocker(side, sp);
+    let outcome = resolveShot(sp.p, gk.p, distM, angle, pressure, this.rng, technique);
+    // The probabilistic resolver describes shot quality. Physical ownership is
+    // decided here: without a body in the path, a nominal "block" is a miss.
+    if (outcome.blocked && !blocker) {
+      outcome = { goal: false, saved: false, blocked: false, wide: true };
+    }
 
     this.recordShot(side, sp.p.id, outcome.goal || outcome.saved);
     this.bumpRating(sp, outcome.goal ? 0 : -0.03);
@@ -3449,11 +3689,23 @@ export class MatchSimulator {
     } else if (outcome.saved) {
       toX = goalX - dir * 40;
       toY = clamp(PITCH_H / 2 + this.rng.float(-60, 60), 100, 550);
-    } else if (outcome.blocked) {
-      toX = goalX - dir * this.rng.float(80, 150);
-      toY = clamp(sp.y + this.rng.float(-70, 70), 40, 610);
+    } else if (outcome.blocked && blocker) {
+      const closeEnoughToDeflectBehind = Math.abs(goalX - blocker.x) < 235;
+      if (closeEnoughToDeflectBehind && this.rng.chance(0.24)) {
+        // The exact defender's touch is now represented by a trajectory over
+        // the goal line outside the posts; the laws can award the corner.
+        toX = goalX + dir * 18;
+        toY = blocker.y < PITCH_H / 2
+          ? this.rng.float(85, 274)
+          : this.rng.float(376, 565);
+      } else {
+        // Most blocks stay live as visible rebounds.
+        toX = clamp(blocker.x - dir * this.rng.float(5, 32), 8, 992);
+        toY = clamp(blocker.y + this.rng.float(-58, 58), 16, 634);
+      }
     } else {
-      // wide: past the goal line outside the posts
+      // A shot with no physical defensive touch always remains attacker-last.
+      // This path is therefore a goal kick when it crosses the line.
       const spread = (this.rng.chance(0.5) ? 1 : -1) * this.rng.float(50, 130);
       toX = goalX + dir * 45;
       toY = clamp(PITCH_H / 2 + spread, -60, PITCH_H + 60);
@@ -3474,6 +3726,7 @@ export class MatchSimulator {
       side,
       shotOutcome: outcome,
       shotTechnique: technique,
+      defenderTouchId: outcome.blocked ? blocker?.p.id : undefined,
       arcH: technique === "chip" ? this.rng.float(38, 62) : technique === "firstTime" ? this.rng.float(2, 10) : 0,
       passerId: sp.p.id,
     });
@@ -3882,25 +4135,42 @@ export class MatchSimulator {
       return;
     }
     if (outcome.blocked) {
-      const blockerIdx = this.nearestPlayerIndex(defending, f.toX, f.toY);
-      const blocker = blockerIdx >= 0 ? this.players(defending)[blockerIdx] : undefined;
-      this.addPlayerStat(blocker?.p.id, "blocks");
-      this.lastTouchSide = defending;
-      const nearGoalLine = Math.abs(this.goalX(attacking) - f.toX) < 115;
-      if (nearGoalLine && this.rng.chance(0.38)) {
-        this.startSetPiece("corner", attacking, this.goalX(attacking), f.toY < 325 ? 5 : 645);
+      const blocker = f.defenderTouchId
+        ? this.players(defending).find((player) => player.p.id === f.defenderTouchId && !player.sentOff)
+        : undefined;
+      if (!blocker) {
+        // Defensive ownership is never inferred from a dice result or nearest
+        // player. If no exact body touched it, the shooter remains last touch.
+        this.lastTouchSide = attacking;
+        if (f.toX <= 0 || f.toX >= PITCH_W) {
+          this.handleBallOutOverGoalLine(attacking, f.toY, defending);
+        } else if (f.toY <= 0 || f.toY >= PITCH_H) {
+          this.startSetPiece("throw", defending, clamp(f.toX, 20, 980), f.toY <= 0 ? 5 : 645);
+        } else {
+          this.makeLoose(f.toX, f.toY, attacking, this.rng.float(-24, 24), this.rng.float(-24, 24));
+        }
         return;
       }
-      const dx = f.toX - f.fromX;
-      const dy = f.toY - f.fromY;
-      const d = Math.hypot(dx, dy) || 1;
-      this.makeLoose(
-        f.toX,
-        f.toY,
-        defending,
-        -(dx / d) * this.rng.float(18, 45) + this.rng.float(-18, 18),
-        -(dy / d) * this.rng.float(18, 45) + this.rng.float(-22, 22),
-      );
+
+      this.addPlayerStat(blocker.p.id, "blocks");
+      this.bumpRating(blocker, 0.035);
+      this.lastTouchSide = defending;
+      if (f.toX <= 0 || f.toX >= PITCH_W) {
+        this.handleBallOutOverGoalLine(attacking, f.toY, defending);
+      } else if (f.toY <= 0 || f.toY >= PITCH_H) {
+        this.startSetPiece("throw", attacking, clamp(f.toX, 20, 980), f.toY <= 0 ? 5 : 645);
+      } else {
+        const dx = f.toX - f.fromX;
+        const dy = f.toY - f.fromY;
+        const d = Math.hypot(dx, dy) || 1;
+        this.makeLoose(
+          f.toX,
+          f.toY,
+          defending,
+          -(dx / d) * this.rng.float(18, 45) + this.rng.float(-18, 18),
+          -(dy / d) * this.rng.float(18, 45) + this.rng.float(-22, 22),
+        );
+      }
       return;
     }
     // wide
@@ -3913,12 +4183,24 @@ export class MatchSimulator {
       shooter?.p.id,
       shooter ? `${shooter.p.firstName} ${shooter.p.lastName} fires wide` : "Shot wide",
     );
-    this.handleBallOutOverGoalLine(attacking, f.toY);
+    this.lastTouchSide = attacking;
+    this.handleBallOutOverGoalLine(attacking, f.toY, defending);
   }
 
   private resolveCrossArrival(f: Flight): void {
     const attacking = f.side;
     const defending = this.other(attacking);
+    if (f.toX <= 0 || f.toX >= PITCH_W) {
+      this.lastTouchSide = attacking;
+      this.handleBallOutOverGoalLine(attacking, f.toY, defending);
+      return;
+    }
+    if (f.toY <= 0 || f.toY >= PITCH_H) {
+      this.lastTouchSide = attacking;
+      this.startSetPiece("throw", defending, clamp(f.toX, 20, 980), f.toY <= 0 ? 5 : 645);
+      return;
+    }
+
     const att = this.bestAt(attacking, f.toX, f.toY, (p) => p.heading + p.jumping);
     const def = this.bestAt(defending, f.toX, f.toY, (p) => p.aerialDuels + p.heading);
     if (!att || !def) {
@@ -3926,10 +4208,7 @@ export class MatchSimulator {
       const idx = this.nearestPlayerIndex(defending, f.toX, f.toY);
       const nearest = idx >= 0 ? this.players(defending)[idx] : undefined;
       const nearestDistance = nearest ? Math.hypot(nearest.x - f.toX, nearest.y - f.toY) : Infinity;
-      if (nearest && nearestDistance < 50 && this.rng.chance(0.3)) {
-        this.lastTouchSide = defending;
-        this.startSetPiece("corner", attacking, this.goalX(attacking), f.toY < 325 ? 5 : 645);
-      } else if (nearest && nearestDistance < 22) {
+      if (nearest && nearestDistance < 22) {
         this.giveBallTo(defending, idx);
       } else {
         this.makeLoose(f.toX, f.toY, attacking, -this.attackDir(attacking) * 14, this.rng.float(-18, 18));
@@ -4181,9 +4460,15 @@ export class MatchSimulator {
   private tickTackles(): void {
     if (!this.carrier) return;
     const side = this.carrier.side;
+    const defendingSide = this.other(side);
     const sp = this.players(side)[this.carrier.i];
     if (!sp || sp.role === "GK") return;
     const carrierDir = this.directives(side, sp);
+    const defendingTeam = this.team(defendingSide);
+    const selectedPressing = defendingTeam.tactics.pressing ?? PressingIntensity.Standard;
+    const defensivePressing = defendingTeam.teamDirectives?.pressHard
+      ? Math.max(selectedPressing, PressingIntensity.High) as PressingIntensity
+      : selectedPressing;
 
     const challengeDistance = (op: SimPlayer) => Math.min(
       Math.hypot(op.x - sp.x, op.y - sp.y),
@@ -4194,15 +4479,18 @@ export class MatchSimulator {
       .sort((a, b) => challengeDistance(a) - challengeDistance(b));
 
     for (const op of challengers) {
-      const opDir = this.directives(this.other(side), op);
+      const opDir = this.directives(defendingSide, op);
       const d = challengeDistance(op) / UNITS_PER_METER;
-      // A standing challenge needs genuine contact distance. Pressure may
-      // influence a decision from several metres away, but cannot magically
-      // tackle through the receiver's first touch.
-      const reach = opDir.pressHard ? 2.15 : 1.85;
+      // A standing challenge still needs genuine contact. Higher pressing
+      // permits a small lunge and a quicker second effort; it does not award a
+      // tackle from several metres away or improve the player's attributes.
+      const pressingRatio = defensivePressing / PressingIntensity.Extreme;
+      const reach = 1.78 + pressingRatio * 0.45 + (opDir.pressHard ? 0.12 : 0);
       if (d > reach) break;
 
-      op.tackleCd = this.rng.float(opDir.pressHard ? 0.7 : 1.0, opDir.pressHard ? 1.35 : 1.9);
+      const cooldownMin = Math.max(0.58, 1.05 - pressingRatio * 0.42 - (opDir.pressHard ? 0.08 : 0));
+      const cooldownMax = Math.max(cooldownMin + 0.25, 1.9 - pressingRatio * 0.68 - (opDir.pressHard ? 0.12 : 0));
+      op.tackleCd = this.rng.float(cooldownMin, cooldownMax);
 
       // Before a tackle, contact can become a physical shielding duel. Strong
       // target players protect it; powerful defenders can still roll them.
@@ -4233,13 +4521,8 @@ export class MatchSimulator {
         this.addPlayerStat(op.p.id, "tacklesWon");
         this.addPlayerStat(op.p.id, "recoveries");
         this.addPlayerStat(sp.p.id, "possessionLost");
-        const nearDefendingGoal = Math.abs(op.x - this.ownGoalX(defending)) < 175;
-        if (nearDefendingGoal && this.rng.chance(0.2)) {
-          this.lastTouchSide = defending;
-          this.startSetPiece("corner", side, this.goalX(side), sp.y < 325 ? 5 : 645);
-          this.bumpRating(op, 0.08);
-          return;
-        }
+        // The tackle is resolved at a real contact point. It cannot jump to a
+        // corner without a subsequent represented deflection over the line.
         this.giveBallTo(defending, this.indexOfPlayer(defending, op));
         this.bumpRating(op, 0.14);
         this.bumpRating(sp, -0.04);
@@ -4456,6 +4739,26 @@ export class MatchSimulator {
     }
   }
 
+  private setPieceTakerPosition(piece: SetPiece): { x: number; y: number } {
+    if (piece.kind === "corner") {
+      return {
+        x: piece.x < PITCH_W / 2 ? -10 : PITCH_W + 10,
+        y: piece.y < PITCH_H / 2 ? -10 : PITCH_H + 10,
+      };
+    }
+    if (piece.kind === "throw") {
+      return {
+        x: piece.x,
+        y: piece.y < PITCH_H / 2 ? -14 : PITCH_H + 14,
+      };
+    }
+    if (piece.kind === "goalKick") return { x: piece.x, y: piece.y };
+    return {
+      x: clamp(piece.x - this.attackDir(piece.side) * 10, 5, 995),
+      y: piece.y,
+    };
+  }
+
   private tickSetPiece(dt: number): void {
     const sp = this.setPiece;
     if (!sp) {
@@ -4467,7 +4770,16 @@ export class MatchSimulator {
     this.ball.y = sp.y;
     this.ballHeight = 0;
 
-    if (sp.timer <= 0) {
+    let taker = this.players(sp.side)[sp.takerIdx];
+    if (!taker || taker.sentOff) {
+      sp.takerIdx = this.selectedTakerIndex(sp.side, sp.kind, sp.x, sp.y);
+      taker = this.players(sp.side)[sp.takerIdx];
+    }
+    const setup = this.setPieceTakerPosition(sp);
+    const takerReady = Boolean(taker && !taker.sentOff && Math.hypot(taker.x - setup.x, taker.y - setup.y) <= 10);
+    // The countdown is only the minimum organisation time. The ball cannot
+    // take itself: execution waits until the named taker physically arrives.
+    if (sp.timer <= 0 && takerReady) {
       this.executeSetPiece(sp);
       this.setPiece = null;
     }
@@ -4484,11 +4796,12 @@ export class MatchSimulator {
     if (!player) return { ...base, intensity: 0.45 };
 
     if (attacking && index === piece.takerIdx) {
-      const behind = piece.kind === "throw" ? 0 : 10;
+      const setup = this.setPieceTakerPosition(piece);
       return {
-        x: clamp(piece.x - dir * behind, 5, 995),
-        y: clamp(piece.kind === "throw" ? (piece.y < 325 ? 8 : 642) : piece.y, 5, 645),
-        intensity: 0.52,
+        ...setup,
+        // Restarts should organise briskly, while still showing the whole run
+        // from the player's current position to the ball.
+        intensity: piece.kind === "corner" || piece.kind === "throw" ? 0.92 : 0.62,
       };
     }
 
@@ -4726,7 +5039,11 @@ export class MatchSimulator {
           const technique: ShotTechnique = (primeShot?.power ?? 0.5) > (primeShot?.placement ?? 0.5)
             ? "power"
             : "placed";
-          const outcome = resolveShot(taker.p, gk.p, distToGoal, angle, 0.45, this.rng, technique);
+          const blocker = this.physicalShotBlocker(side, taker);
+          let outcome = resolveShot(taker.p, gk.p, distToGoal, angle, 0.45, this.rng, technique);
+          if (outcome.blocked && !blocker) {
+            outcome = { goal: false, saved: false, blocked: false, wide: true };
+          }
           this.recordShot(side, taker.p.id, outcome.goal || outcome.saved);
           let toX: number;
           let toY: number;
@@ -4736,9 +5053,9 @@ export class MatchSimulator {
           } else if (outcome.saved) {
             toX = goalX - dir * 40;
             toY = clamp(PITCH_H / 2 + this.rng.float(-60, 60), 100, 550);
-          } else if (outcome.blocked) {
-            toX = goalX - dir * this.rng.float(90, 150);
-            toY = clamp(sp.y + this.rng.float(-70, 70), 40, 610);
+          } else if (outcome.blocked && blocker) {
+            toX = clamp(blocker.x - dir * this.rng.float(5, 28), 8, 992);
+            toY = clamp(blocker.y + this.rng.float(-45, 45), 24, 626);
           } else {
             toX = goalX + dir * 45;
             toY = clamp(
@@ -4758,6 +5075,7 @@ export class MatchSimulator {
             side,
             shotOutcome: outcome,
             shotTechnique: technique,
+            defenderTouchId: outcome.blocked ? blocker?.p.id : undefined,
             passerId: taker.p.id,
           });
           this.lastTouchSide = side;
@@ -4824,7 +5142,14 @@ export class MatchSimulator {
     this.ball.y = PITCH_H / 2;
     this.ballHeight = 0;
     ps.timer -= dt;
-    if (ps.timer <= 0 && !ps.resolved) {
+    let taker = this.players(ps.side)[ps.takerIdx];
+    if (!taker || taker.sentOff) {
+      ps.takerIdx = this.selectedTakerIndex(ps.side, "penalty", this.ball.x, this.ball.y);
+      taker = this.players(ps.side)[ps.takerIdx];
+    }
+    const setup = this.penaltyPosition(ps.side, ps.takerIdx);
+    const takerReady = Boolean(taker && !taker.sentOff && setup && Math.hypot(taker.x - setup.x, taker.y - setup.y) <= 10);
+    if (ps.timer <= 0 && takerReady && !ps.resolved) {
       ps.resolved = true;
       this.resolvePenaltyShot(ps.side, ps.takerIdx);
     }

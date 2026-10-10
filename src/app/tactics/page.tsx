@@ -9,6 +9,7 @@ import InstructionInterpretationView from "@/components/InstructionInterpretatio
 import PlayerRoleEditor from "@/components/PlayerRoleEditor";
 import { useGameStore } from "@/store/gameStore";
 import { assignTacticalNumbers, selectBestXI } from "@/engine/matchSimulator";
+import { pressingBehavior } from "@/engine/pressing";
 import { FORMATION_NAMES } from "@/engine/formations";
 import {
   playerRoleDefinition,
@@ -60,7 +61,13 @@ const SLIDERS: {
   { key: "mentality", label: "Mentality", min: 0, max: 6, ends: ["Ultra Defensive", "Ultra Attacking"] },
 ];
 
-const PRESS_REACH = [0, 45, 95, 160, 235]; // visual press-zone depth per level
+const PRESS_REACH = [
+  PressingIntensity.None,
+  PressingIntensity.Low,
+  PressingIntensity.Standard,
+  PressingIntensity.High,
+  PressingIntensity.Extreme,
+].map((intensity) => pressingBehavior(intensity).visualReach);
 const TACTICS_PITCH_H = 1000;
 const TACTICS_GOAL_MARGIN = 30;
 const TACTICS_GOAL_DEPTH = 24;
@@ -584,6 +591,12 @@ export default function TacticsPage() {
                     endLabel={sl.ends[1]}
                     ariaLabel={sl.label}
                   />
+                  {sl.key === "pressing" && (
+                    <p className="mt-1.5 rounded-lg border border-gold/15 bg-gold/5 px-2.5 py-2 text-[10px] leading-relaxed text-white/55">
+                      <span className="font-bold text-gold">Physical effect: </span>
+                      {pressingBehavior(draft.pressing).description}
+                    </p>
+                  )}
                 </div>
               ))}
 
