@@ -22,6 +22,23 @@ npm test           # full Vitest suite
 npm run build      # production build
 ```
 
+## Android APK
+
+The repository includes a Capacitor 7 Android shell (`com.footballmanagercontinental.game`).
+It packages a static export of the game inside the app, retains IndexedDB career saves, supports
+Android back navigation and vibration, and includes branded adaptive icons and splash screens.
+
+```bash
+npm run build:android:web  # create the static export in out/
+npm run android:sync      # export and synchronize the native project
+npm run android:apk       # build android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+A local APK build requires Android SDK 35 and Java 21. The **Build Android APK** GitHub Actions
+workflow installs those tools and publishes `FootballManagerContinental-debug.apk` as a downloadable
+artifact. Debug APKs are installable for testing; Play Store publishing requires a privately held
+release-signing key and a release bundle.
+
 ## The game
 
 - **Two selectable career databases** are available directly from the main menu. Both retain the

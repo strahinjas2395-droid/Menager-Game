@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity=".42"/>
+    </filter>
+  </defs>
+  <path d="M512 224 742 318v202c0 150-92 246-230 300-138-54-230-150-230-300V318Z" fill="#17182E" stroke="#F0A500" stroke-width="28" filter="url(#shadow)"/>
+  <path d="M512 274 686 345v165c0 108-62 180-174 230-112-50-174-122-174-230V345Z" fill="none" stroke="#F0A500" stroke-width="8" opacity=".5"/>
+  <text x="512" y="536" text-anchor="middle" fill="#F0A500" font-family="DejaVu Sans, sans-serif" font-size="174" font-weight="900" letter-spacing="-11">FMC</text>
+  <path d="M392 594h240" stroke="#F0A500" stroke-width="11" stroke-linecap="round"/>
+  <text x="512" y="652" text-anchor="middle" fill="#FFFFFF" font-family="DejaVu Sans, sans-serif" font-size="41" font-weight="700" letter-spacing="6">MANAGER</text>
+</svg>
