@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * Hosted semantic interpreter for natural-language tactical instructions.
+ * Validated natural-language tactical instruction gateway.
  *
- * Puter supplies a small cloud model without a developer API key or a local
- * model download. The model never controls the simulation directly: it calls
- * one constrained tool, then every id/value is validated here before the
- * result can be persisted or posted to the match worker.
+ * Production uses a small sentence-embedding model that downloads once and
+ * runs locally in the browser without an account or API key. A structured
+ * provider adapter remains injectable for deterministic contract tests and
+ * older cached integrations. Neither path controls the simulation directly:
+ * every value and player id is validated before it can be persisted.
  */
-import type { ChatMessage, ChatResponse, Tool } from "@heyputer/puter.js";
 import type {
   TacticalDirectives,
   TacticalInstructionInterpretation,
@@ -22,8 +22,33 @@ import {
   summarizeDirectives,
   type InstructionRosterPlayer,
 } from "@/engine/directives";
+import {
+  LOCAL_TACTICAL_MODEL_LABEL,
+  interpretTacticalInstructionsLocally,
+} from "@/services/localTacticalInterpreter";
 
-export const TACTICAL_AI_MODEL = "gpt-5.4-nano";
+export const TACTICAL_AI_MODEL = LOCAL_TACTICAL_MODEL_LABEL;
+
+export interface TacticalChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface TacticalTool {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+interface StructuredChatResponse {
+  message?: {
+    content?: string | unknown[];
+    tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>;
+  };
+}
 
 export interface TacticalInstructionRequest {
   key: string;
@@ -39,7 +64,7 @@ export interface TacticalInterpretationBatch {
 }
 
 export interface TacticalAIProvider {
-  complete(messages: ChatMessage[], tool: Tool): Promise<unknown>;
+  complete(messages: TacticalChatMessage[], tool: TacticalTool): Promise<unknown>;
   model: string;
 }
 
@@ -77,7 +102,7 @@ const DIRECTIVES_SCHEMA = {
   properties: DIRECTIVE_PROPERTIES,
 };
 
-const INTERPRET_TOOL: Tool = {
+const INTERPRET_TOOL: TacticalTool = {
   type: "function",
   function: {
     name: "submit_tactical_interpretations",
@@ -139,7 +164,7 @@ function systemPrompt(): string {
 export function buildTacticalInterpreterMessages(
   roster: InstructionRosterPlayer[],
   requests: TacticalInstructionRequest[],
-): ChatMessage[] {
+): TacticalChatMessage[] {
   const rosterPayload = roster.map((player) => ({
     id: player.id,
     name: player.name,
@@ -165,22 +190,6 @@ export function buildTacticalInterpreterMessages(
   ];
 }
 
-const puterProvider: TacticalAIProvider = {
-  model: TACTICAL_AI_MODEL,
-  async complete(messages, tool) {
-    const { puter } = await import("@heyputer/puter.js");
-    return puter.ai.chat(messages, {
-      model: TACTICAL_AI_MODEL,
-      temperature: 0,
-      max_tokens: 2600,
-      reasoning_effort: "minimal",
-      verbosity: "low",
-      normalize: true,
-      tools: [tool],
-    });
-  },
-};
-
 function parseJsonObject(text: string): unknown {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = cleaned.indexOf("{");
@@ -191,7 +200,7 @@ function parseJsonObject(text: string): unknown {
 
 function providerPayload(value: unknown): unknown {
   if (!value || typeof value !== "object") throw new Error("The AI returned an invalid response.");
-  const response = value as ChatResponse;
+  const response = value as StructuredChatResponse;
   const toolCall = response.message?.tool_calls?.find(
     (call) => call.function?.name === INTERPRET_TOOL.function.name,
   );
@@ -245,19 +254,34 @@ function validateAssignments(
 }
 
 /**
- * Interpret one or many notes in one cloud request. If the service is blocked,
- * unauthenticated or temporarily unavailable, every item receives a visibly
- * labelled offline result rather than preventing the match from running.
+ * Interpret one or many notes locally by default. If the first-use download or
+ * cached model is unavailable, every item receives a visibly labelled basic
+ * fallback rather than preventing the match from running. Tests and legacy
+ * adapters may inject a structured provider through the third argument.
  */
 export async function interpretTacticalInstructions(
   roster: InstructionRosterPlayer[],
   requests: TacticalInstructionRequest[],
-  provider: TacticalAIProvider = puterProvider,
+  provider?: TacticalAIProvider,
 ): Promise<TacticalInterpretationBatch> {
   const active = requests.filter((request) => normalizeInstructionText(request.text));
   if (!active.length) return { interpretations: {} };
 
   const fingerprint = instructionContextFingerprint(roster);
+  if (!provider) {
+    try {
+      return await interpretTacticalInstructionsLocally(roster, active);
+    } catch (error) {
+      const warning = error instanceof Error ? error.message : "The local AI interpreter is unavailable.";
+      return {
+        warning,
+        interpretations: Object.fromEntries(active.map((request) => [
+          request.key,
+          createOfflineInterpretation(request.text, request.scope, fingerprint, request.subjectPlayerId),
+        ])),
+      };
+    }
+  }
   const validTargetIds = new Set(
     roster.filter((player) => player.tacticalNumber !== undefined && player.role !== undefined)
       .map((player) => player.id),

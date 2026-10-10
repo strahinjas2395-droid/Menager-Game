@@ -551,7 +551,8 @@ export interface TacticalInstructionInterpretation {
   understood: string[];
   /** Meaning that the current simulation cannot represent safely. */
   unsupported: string[];
-  source: "ai" | "offline";
+  /** local-ai runs in the browser; ai is retained for older saves/test adapters. */
+  source: "local-ai" | "ai" | "offline";
   model?: string;
   createdAt: number;
 }

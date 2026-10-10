@@ -26,14 +26,15 @@ export default function InstructionInterpretationView({
     );
   }
 
-  const isAI = interpretation.source === "ai";
+  const isSemanticAI = interpretation.source === "local-ai" || interpretation.source === "ai";
+  const isLocal = interpretation.source === "local-ai";
   return (
-    <div className={`mt-2 rounded-lg border px-2.5 py-2 ${isAI ? "border-gold/25 bg-gold/5" : "border-amber-400/30 bg-amber-400/5"}`}>
+    <div className={`mt-2 rounded-lg border px-2.5 py-2 ${isSemanticAI ? "border-gold/25 bg-gold/5" : "border-amber-400/30 bg-amber-400/5"}`}>
       <div className="flex items-center justify-between gap-2">
-        <span className={`text-[8px] font-black uppercase tracking-wide ${isAI ? "text-gold" : "text-amber-300"}`}>
-          {isAI ? "AI understood" : "Basic offline fallback"}
+        <span className={`text-[8px] font-black uppercase tracking-wide ${isSemanticAI ? "text-gold" : "text-amber-300"}`}>
+          {isLocal ? "Local AI understood" : isSemanticAI ? "AI understood" : "Basic offline fallback"}
         </span>
-        <span className="truncate text-[8px] text-white/25">{isAI ? interpretation.model : "re-interpret when online"}</span>
+        <span className="truncate text-[8px] text-white/25">{isSemanticAI ? interpretation.model : "retry local AI when available"}</span>
       </div>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {interpretation.understood.length ? interpretation.understood.map((label, index) => (

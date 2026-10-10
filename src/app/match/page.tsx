@@ -664,7 +664,7 @@ function MatchScreen() {
           onClick={() => setLiveInterpretWarning(null)}
           className="absolute bottom-3 left-1/2 z-[65] max-w-[90%] -translate-x-1/2 rounded-xl border border-amber-400/30 bg-black/90 px-3 py-2 text-[9px] leading-relaxed text-amber-200 shadow-xl"
         >
-          Cloud AI was unavailable; a basic fallback was applied. Tap to dismiss and retry from Match Tactics when online.
+          Local tactical AI was unavailable; a basic fallback was applied. Tap to dismiss and retry from Match Tactics after the model can load.
         </button>
       )}
 
@@ -1097,7 +1097,7 @@ function LiveTacticsPanel({
           <div className="mt-4 rounded-xl border border-white/10 bg-card p-3">
             <div className="flex items-center justify-between">
               <span className="stat-label">Live Individual Instruction</span>
-              <span className="text-[9px] text-gold/70">AI semantic plan</span>
+              <span className="text-[9px] text-gold/70">Local AI semantic plan</span>
             </div>
             <select value={instructionPlayerId} onChange={(e) => setInstructionPlayerId(e.target.value)}
               className="mt-2 w-full rounded-lg border border-white/10 bg-navy px-2 py-2 text-[10px]">
@@ -1162,7 +1162,7 @@ function LiveTacticsPanel({
 
           {(localWarning || interpretWarning) && (
             <div className="mt-3 rounded-lg border border-amber-400/30 bg-amber-400/10 p-2 text-[9px] leading-relaxed text-amber-200">
-              Cloud AI unavailable: {localWarning ?? interpretWarning}. A visibly marked basic fallback was used.
+              Local AI unavailable: {localWarning ?? interpretWarning}. A visibly marked basic fallback was used.
             </div>
           )}
 

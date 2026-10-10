@@ -43,7 +43,7 @@ function provider(payload: unknown, inspect?: (prompt: string) => void): Tactica
   };
 }
 
-describe("hosted tactical language intelligence", () => {
+describe("structured tactical provider contract", () => {
   it("passes unmodified, misspelled natural language and roster context to the model", async () => {
     const text = "Lft bak, kep pingin it loong at fiveteen whenever hes free";
     let sentPrompt = "";

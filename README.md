@@ -3,7 +3,7 @@
 A full football-management simulation game for the browser — build your dynasty across
 league, cup, and continental competitions.
 
-**Stack:** Next.js 14 · TypeScript (strict) · Tailwind CSS · Zustand · Phaser 3 · Puter AI · Vitest
+**Stack:** Next.js 14 · TypeScript (strict) · Tailwind CSS · Zustand · Phaser 3 · Transformers.js · Vitest
 
 ## Quick start
 
@@ -12,7 +12,7 @@ npm install
 npm run dev        # http://localhost:3000
 ```
 
-Natural-language tactics use Puter’s hosted AI from the browser. No developer API key or local model is required; Puter may show a sign-in prompt when the manager first asks AI to interpret an instruction.
+Natural-language tactics use a pinned revision of the quantized `Xenova/all-MiniLM-L6-v2` semantic model locally in the browser through a pinned Transformers.js runtime. The first interpretation downloads the roughly 23 MB model plus its small tokenizer/WASM runtime, and the browser caches them for later use. Inference needs no account, API key, subscription, dedicated GPU, or server-side prompt processing. Both the model and runtime are distributed under Apache-2.0 terms.
 
 Other scripts:
 
@@ -25,7 +25,8 @@ npm run build      # production build
 ## The game
 
 - **20 leagues across 15 nations** (5 nations have two divisions with promotion/relegation),
-  400 clubs, ~10,000 generated players — all deterministic from a seed.
+  400 recognisable fictional clubs, and ~10,000 generated players with position-compatible
+  mixed-era iconic aliases — all deterministic from a seed.
 - **42-week season**: 38 double round-robin league weeks, domestic cup rounds
   (weeks 7/14/21/28/35), an 8-group continental championship with single-leg knockouts
   (weeks 30/33/36/40), and transfer windows in weeks 1–4 and 19–22.
@@ -47,10 +48,11 @@ npm run build      # production build
 - **Tactics setup**: 32 formations on a space-efficient vertical board, draggable pitch
   positions, traditional role numbers, tap-to-view player stat cards, dot-based controls,
   set-piece takers, captain, and persistent free-text instructions for both players and the
-  whole team. A hosted language model understands open-ended multilingual wording and misspellings,
-  resolves names/numbers/roles against the current squad, and submits a strictly validated
-  tactical plan. The UI shows understood and unsupported meaning; cached plans keep the
-  simulator deterministic and a clearly labelled basic fallback keeps matches playable offline.
+  whole team. A compact browser-local semantic model interprets open-ended wording and reasonable
+  misspellings, resolves names/numbers/roles against the current squad, and submits a strictly
+  validated tactical plan. The UI shows understood and unsupported meaning; cached plans keep the
+  simulator deterministic and a clearly labelled non-AI basic fallback keeps matches playable if
+  the model cannot load.
 - **Instruction-driven behavior**: resolved recipients become strongly preferred passing
   options with requested ground/aerial service; defensive duties can pull a striker into the
   block to track and press; team-wide urgent clearances execute only in credible danger areas.

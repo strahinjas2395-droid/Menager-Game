@@ -2,10 +2,10 @@
  * Tactical instruction contracts and the deterministic emergency fallback.
  *
  * Open-ended language is interpreted by services/tacticalInterpreter.ts using
- * a hosted language model. This engine module deliberately does not try to be
- * an English-language grammar: it validates the model's finite tactical plan,
- * exposes cached plans to the simulator, and keeps the old small phrase parser
- * only so a match remains playable while the AI service is offline.
+ * a browser-local semantic model. This engine module deliberately does not try
+ * to be an English-language grammar: it validates the model's finite tactical
+ * plan, exposes cached plans to the simulator, and keeps the old small phrase
+ * parser only so a match remains playable when local inference is unavailable.
  */
 import {
   PlayStyle,
@@ -181,7 +181,7 @@ interface LexEntry {
   noFlip?: boolean;
 }
 
-// Small compatibility fallback only. The hosted language model is the primary
+// Small compatibility fallback only. The local semantic model is the primary
 // interpreter; do not grow this into another pretend natural-language system.
 const OFFLINE_LEXICON: LexEntry[] = [
   { re: /\b(hold (your )?position|stay (deep|back)|sit (deep|in)|drop (deep|off)|no roaming|don'?t (get )?(forward|roam|wander|overlap)|do not (get )?(forward|roam|overlap)|no (forward )?runs|don'?t push on)\b/i, key: "holdPosition", noFlip: true },
@@ -343,15 +343,22 @@ const FALSE_LABELS: Partial<Record<keyof TacticalDirectives, string>> = {
   roam: "Keep positional discipline",
   stayWide: "Do not stay on the touchline",
   cutInside: "Do not move inside",
+  defensiveDuty: "Do not adopt a deep defensive duty",
   shootFromDistance: "Do not shoot from distance",
+  avoidShooting: "Take suitable shooting chances",
+  dribbleMore: "Do not increase take-ons",
+  dribbleLess: "Do not restrict dribbling",
   riskyPasses: "Avoid risky passes",
   shortPassing: "Do not restrict passing to short options",
   directPassing: "Do not force direct passes",
+  targetMan: "Do not play as a holding target",
   earlyCross: "Do not cross early",
   switchPlay: "Do not force switches",
   clearImmediately: "Do not clear automatically",
   tightMarking: "Do not mark tightly",
   pressHard: "Do not join the aggressive press",
+  pressLess: "Do not stand off",
+  conserveEnergy: "Use normal intensity",
 };
 
 /** Friendly chips for either AI results or the basic fallback. */

@@ -620,7 +620,7 @@ export default function TacticsPage() {
                   <div>
                     <span className="stat-label">Talk to the whole team</span>
                     <p className="mt-1 text-[10px] leading-relaxed text-white/40">
-                      Write in your own words and language—even with shorthand or spelling mistakes. Cloud AI resolves meaning, players and roles into match behavior.
+                      Write in your own words—even with shorthand or spelling mistakes. A small on-device AI model resolves meaning, players and roles; first use downloads it once, then your browser cache reuses it.
                     </p>
                   </div>
                   <Sparkles size={17} className="mt-0.5 shrink-0 text-gold" />
@@ -660,7 +660,7 @@ export default function TacticsPage() {
               <div>
                 <span className="stat-label">Individual Instructions</span>
                 <p className="mt-1 text-[10px] leading-relaxed text-white/40">
-                  Describe intent in your own words or language. The AI understands context and resolves teammate references instead of scanning for command phrases.
+                  Describe intent in your own words. Local AI uses semantic context and resolves teammate references instead of scanning for command phrases.
                 </p>
               </div>
               <Sparkles size={18} className="shrink-0 text-gold" />
@@ -729,7 +729,7 @@ export default function TacticsPage() {
 
           {interpretWarning && (
             <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10px] leading-relaxed text-amber-200">
-              Cloud AI was unavailable: {interpretWarning} The saved result is visibly marked as an offline fallback and can be reinterpreted later.
+              Local AI was unavailable: {interpretWarning} The saved result is visibly marked as a non-AI basic fallback and can be reinterpreted later.
             </div>
           )}
 

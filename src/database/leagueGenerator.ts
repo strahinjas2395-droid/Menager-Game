@@ -7,6 +7,7 @@ import { ManagerPersonality, PlayStyle, type Club, type League, type Manager, ty
 import { SeededRNG, clamp } from "@/database/rng";
 import { NAME_POOLS, NATIONALITY_FLAGS, generateName } from "@/database/nameGenerator";
 import { generateSquad } from "@/database/playerGenerator";
+import { applyIconicPlayerAliases, clubIdentityNames } from "@/database/footballIdentities";
 
 interface LeagueDef {
   name: string;
@@ -24,217 +25,97 @@ export const LEAGUES_DATA: LeagueDef[] = [
   // --- Bretherland (2 divisions) ---
   {
     name: "Premiere Division", nation: "Bretherland", tier: 1, reputation: 88,
-    clubs: [
-      "Ashford United", "Blackstone City", "Castleford Rovers", "Durnham Athletic",
-      "Eastbourne Wanderers", "Foxworth Town", "Greenwell FC", "Hartfield Rangers",
-      "Ivybridge City", "Kingsport United", "Lancaster FC", "Millhaven Town",
-      "Northcastle United", "Oldcastle Rovers", "Portfield City", "Queensbury Athletic",
-      "Redstone Wanderers", "Southcrest FC", "Thornbury Rangers", "Westmoor City",
-    ],
+    clubs: clubIdentityNames("bretherland-1"),
   },
   {
     name: "The Championship", nation: "Bretherland", tier: 2, reputation: 68,
-    clubs: [
-      "Bexley County", "Bramford Athletic", "Cottersley Town", "Drakemoor United",
-      "Evershed Wanderers", "Farrowdale FC", "Gatley Rovers", "Highmoor Town",
-      "Ironbridge FC", "Kelsale City", "Langton Rangers", "Mapperley Town",
-      "Norbury Albion", "Oakmere United", "Pendlebury County", "Queensmead City",
-      "Redmarley Rovers", "Stanwick Town", "Trenholme Athletic", "Whitcombe FC",
-    ],
+    clubs: clubIdentityNames("bretherland-2"),
   },
   // --- Valdoria (2 divisions) ---
   {
     name: "Valdorian Liga", nation: "Valdoria", tier: 1, reputation: 85,
-    clubs: [
-      "Real Montecarlo", "Atletico Solares", "CF Esperanza", "Deportivo Valdez",
-      "Real Castillo", "FC Maravilla", "Severo Club", "Racing Portoval",
-      "CD Luminara", "Valencia Nova FC", "SD Tempesta", "CF Rioseco",
-      "Real Orinoco", "Atletico Fuego", "CD Brisa", "FC Altamira",
-      "SD Estrella", "Racing Dorado", "CF Vistabella", "Real Cumbres",
-    ],
+    clubs: clubIdentityNames("valdoria-1"),
   },
   {
     name: "Segunda Liga", nation: "Valdoria", tier: 2, reputation: 66,
-    clubs: [
-      "CD Alborada", "Atletico Sierra", "UD Montesino", "Racing Almeira",
-      "Real Cordillera", "CF Donana", "Deportivo Llanura", "FC Mirador",
-      "CD Nervia", "Atletico Puentela", "Racing Valles", "SD Romeral",
-      "CF Santa Eulalia", "Real Talamera", "CD Ulia", "UD Vega",
-      "FC Verdeguia", "SD Zurita", "CF Monteagudo", "Atletico Salinas",
-    ],
+    clubs: clubIdentityNames("valdoria-2"),
   },
   // --- Azzuriland ---
   {
     name: "Serie Stella", nation: "Azzuriland", tier: 1, reputation: 84,
-    clubs: [
-      "AC Belluno", "SS Aurora", "Calcio Fiorenza", "AS Tricolore",
-      "Virtus Padano", "US Riviera", "AC Maremonti", "SSC Solara",
-      "FBC Adriatico", "AC Montefiore", "US Castello", "SC Orizzonte",
-      "AC Verdevalle", "FBC Lucento", "SSC Marechiaro", "AC Pietrasanta",
-      "US Torrevela", "SC Granducale", "AC Belfiore", "FBC Ferraro",
-    ],
+    clubs: clubIdentityNames("azzuriland-1"),
   },
   // --- Gallonde ---
   {
     name: "Ligue Royale", nation: "Gallonde", tier: 1, reputation: 83,
-    clubs: [
-      "FC Auberive", "AS Montclair", "Olympique Valrose", "FC Chanteloup",
-      "RC Bellevue", "FC D'Harcourt", "SC Lumiere", "FC Montvallon",
-      "AS Perronne", "Olympique Roussillon", "FC Saint-Aubin", "SC Tournepierre",
-      "FC Vaudreuil", "AS Yvermont", "RC Argentel", "FC Granval",
-      "AS Coteaux", "FC Durance", "Olympique Ferriere", "FC Bellerive",
-    ],
+    clubs: clubIdentityNames("gallonde-1"),
   },
   // --- Schwarzland (2 divisions) ---
   {
     name: "Bundesliga", nation: "Schwarzland", tier: 1, reputation: 86,
-    clubs: [
-      "SV Adlertal", "FC Blauweiss Talheim", "VfB Eisberg", "Rot-Weiss Kronbach",
-      "SC Falkenried", "SV Graustadt", "FC Hohenfeld", "SC Eisenhut",
-      "VfL Klarenbach", "SV Morgenstern", "FC Nordwind", "Blau-Weiss Osterfeld",
-      "SC Rheintal", "SV Steinburg", "VfB Tannenheim", "FC Unterland",
-      "SV Waldenbruck", "SC Weissensee", "FC Ziegelheim", "SV Kronwerk",
-    ],
+    clubs: clubIdentityNames("schwarzland-1"),
   },
   {
     name: "Zweite Liga", nation: "Schwarzland", tier: 2, reputation: 65,
-    clubs: [
-      "FC Altenfeld", "SV Bergland", "SC Donaugau", "VfB Ehrenfeld",
-      "FC Frohsinn", "SV Grunenberg", "SC Hammerstadt", "FC Kaiserhain",
-      "SV Lindenberg", "FC Nordstadt", "SV Rheinbach", "SC Schildberg",
-      "FC Schwarzbach", "SV Steinacker", "SC Vogtberg", "FC Waldhorst",
-      "SV Weissbach", "SC Westenfeld", "FC Zeitzfeld", "SV Hafenstadt",
-    ],
+    clubs: clubIdentityNames("schwarzland-2"),
   },
   // --- Oranjeland ---
   {
     name: "Eredivisie", nation: "Oranjeland", tier: 1, reputation: 80,
-    clubs: [
-      "SC Amstelstad", "VV Bovenland", "FC Delfveld", "Excelsior Noorddam",
-      "SC Eemhaven", "VV Flevowijk", "FC Gooiberg", "HV De Riet",
-      "SC IJsselstad", "VV Kustduin", "FC Meridiaan", "SC Nieuwland",
-      "VV Oranjepark", "FC Polderstad", "SC Rijnhoek", "VV Slotenoord",
-      "FC Stadsveld", "SC Tweestromen", "VV Vechtstad", "FC Zilvermeeuw",
-    ],
+    clubs: clubIdentityNames("oranjeland-1"),
   },
   // --- Nordheim ---
   {
     name: "Eliteserien", nation: "Nordheim", tier: 1, reputation: 76,
-    clubs: [
-      "IF Fjordvik", "BK Bergheim", "SK Brannoy", "FK Dalemark",
-      "IF Ekorn", "SK Fjelltopp", "FK Grenlia", "IF Havbris",
-      "SK Isfjell", "FK Kystby", "IF Lorenvik", "SK Midtfjell",
-      "FK Nordvik", "IF Olsund", "SK Ravnholm", "FK Solberg",
-      "IF Stormvik", "SK Soderas", "FK Tindvik", "IF Vestbygd",
-    ],
+    clubs: clubIdentityNames("nordheim-1"),
   },
   // --- Campoverde (2 divisions) ---
   {
     name: "Campeonato Nacional", nation: "Campoverde", tier: 1, reputation: 82,
-    clubs: [
-      "Atletico Verde", "Gremio Serrado", "EC Beirada", "FC Palmares",
-      "Nacional Aurora", "SC Riodoce", "EC Tupã", "CA Andina",
-      "CD Miralto", "FC Costa Azul", "Atletico Bravio", "ES Esmeralda",
-      "CA Puerto Sereno", "Union del Sur", "CD Labrada", "FC Sol y Sombra",
-      "CA Nueva Espera", "SD Cerrillos", "FC Tempestad", "CA Barranca",
-    ],
+    clubs: clubIdentityNames("campoverde-1"),
   },
   {
     name: "Segunda Division", nation: "Campoverde", tier: 2, reputation: 64,
-    clubs: [
-      "CD Puertomonte", "Atletico Viento", "CA Las Brisas", "FC Vallehermoso",
-      "ES Nuevo Amanecer", "CD Norte Grande", "CA Ribera", "FC Camino Real",
-      "SD Monteluz", "CD Oriental", "Atletico Centenario", "CA Frontera",
-      "ES Gaviota", "FC La Esperanza", "Club Alameda", "CD Naranjal",
-      "FC Piedra Azul", "CA Solariega", "ES El Progreso", "FC Cardonal",
-    ],
+    clubs: clubIdentityNames("campoverde-2"),
   },
   // --- Lusitana ---
   {
     name: "Primeira Liga", nation: "Lusitana", tier: 1, reputation: 79,
-    clubs: [
-      "FC Alvorada", "CD Beiral", "AD Costeira", "SC Dourada",
-      "FC Estrelado", "GD Fontinhas", "FC Guadiana", "AD Ilha Verde",
-      "SC Lumar", "FC Marinha Alta", "GD Minho", "FC Mondego",
-      "AD Nazareth", "SC Ourela", "FC Penaforte", "GD Praia Nova",
-      "SC Quintanilha", "FC Ribeira Clara", "AD Sabrosa", "GD Vianova",
-    ],
+    clubs: clubIdentityNames("lusitana-1"),
   },
   // --- Slavonica ---
   {
     name: "SuperLiga", nation: "Slavonica", tier: 1, reputation: 74,
-    clubs: [
-      "FK Belovar", "NK Podgorac", "FK Crnobrod", "NK Dunav",
-      "FK Zlatna Reka", "FK Varos", "NK Svetlost", "FK Rudnik",
-      "FK Orlica", "NK Valov", "FK Borje", "FK Plamen",
-      "NK Veternik", "FK Zmajevo", "FK Nova Iskra", "NK Sokolovo",
-      "FK Srebrna", "FK Porecan", "NK Jasen", "FK Trebava",
-    ],
+    clubs: clubIdentityNames("slavonica-1"),
   },
   // --- Caledonia ---
   {
     name: "Premiership", nation: "Caledonia", tier: 1, reputation: 75,
-    clubs: [
-      "Clydefield", "Forthcastle", "Gallowmuir", "Harthaven",
-      "Invermoss", "Kilmarnoon", "Lochend", "Montdhu",
-      "Nethercraig", "Outerwick", "Pitnarroch", "Queenshaugh",
-      "Rossmuir", "Strathdorn", "Taycross", "Unionbrae",
-      "Westglen", "Ardenmore", "Braemount", "Cairnhill",
-    ],
+    clubs: clubIdentityNames("caledonia-1"),
   },
   // --- Emeraldia ---
   {
     name: "Premier Division", nation: "Emeraldia", tier: 1, reputation: 73,
-    clubs: [
-      "Avondale FC", "Ballinbeg", "Carrowfield", "Dunmore Rovers",
-      "Ennismore", "Fairhill", "Gallowglass", "Hilltown United",
-      "Inisfail", "Johnsburgh", "Kilcarrig", "Loughrinn",
-      "Mournefort", "Newvale", "Oranfield", "Portlawn",
-      "Rathmoyle", "Slievemore", "Tullyvane", "Woodlawn",
-    ],
+    clubs: clubIdentityNames("emeraldia-1"),
   },
   // --- Helvetica ---
   {
     name: "Super League", nation: "Helvetica", tier: 1, reputation: 77,
-    clubs: [
-      "FC Alpenblick", "SC Basilea", "FC Bielersee", "SC Chablais",
-      "FC Emmental", "FC Gruyere", "FC Genevois", "SC Hirzenbach",
-      "FC Ilanz", "SC Kandersteg", "FC Lemann", "SC Seduno",
-      "FC Münstertal", "SC Neuchatel", "FC Orbe", "SC Rheinfelden",
-      "FC Sargans", "SC Simmental", "FC Verbano", "SC Zermatt",
-    ],
+    clubs: clubIdentityNames("helvetica-1"),
   },
   // --- Anatolia ---
   {
     name: "Super Lig", nation: "Anatolia", tier: 1, reputation: 81,
-    clubs: [
-      "Anadolu SK", "Beyazit SK", "Cinar SK", "Deniz FK",
-      "Erciyes SK", "Firtina SK", "Gunes SK", "Hilal SK",
-      "Irmak SK", "Kaya SK", "Leylek SK", "Marmara SK",
-      "Nergis SK", "Ova SK", "Poyraz SK", "Ruzgar SK",
-      "Sapanca SK", "Toros SK", "Uludag SK", "Zeytin SK",
-    ],
+    clubs: clubIdentityNames("anatolia-1"),
   },
   // --- Hellenia (2 divisions) ---
   {
     name: "Ethniki", nation: "Hellenia", tier: 1, reputation: 76,
-    clubs: [
-      "AO Aigaio", "AE Anatoli", "AS Argo", "GS Voreia",
-      "AE Dokos", "AO Evros", "AO Zefyros", "AE Kyma",
-      "AS Lefkos", "AO Mani", "GS Naxos", "AE Orestis",
-      "AO Pindos", "AS Thrakis", "AE Tilos", "AO Fthia",
-      "GS Chios", "AE Ithaki", "AO Kerkini", "AS Aetos",
-    ],
+    clubs: clubIdentityNames("hellenia-1"),
   },
   {
     name: "Football League", nation: "Hellenia", tier: 2, reputation: 63,
-    clubs: [
-      "AO Agrios", "AE Vathi", "AS Galini", "GS Doridos",
-      "AO Egina", "AE Kefalos", "AS Litrion", "GS Mesogios",
-      "AO Neapolis", "AE Omiros", "AS Pallini", "GS Parnitha",
-      "AO Rouf", "AE Saronikos", "AS Sfakion", "GS Tenedos",
-      "AO Ydra", "AE Chalandri", "AS Kaisariani", "AO Filothei",
-    ],
+    clubs: clubIdentityNames("hellenia-2"),
   },
 ];
 
@@ -469,6 +350,7 @@ export function generateAllLeagues(seed: number): GeneratedWorld {
       const leagueLevel = rank + (def.tier === 2 ? 12 : 0) + (def.reputation < 78 ? 6 : 0);
       const squadSeed = (seed ^ hashStr(clubId)) >>> 0;
       const squad = generateSquad(clubId, leagueLevel, def.nation, new SeededRNG(squadSeed), squadSeed);
+      applyIconicPlayerAliases(clubName, squad);
       const wageScale = def.reputation / 82;
       for (const p of squad) {
         p.id = uniqueId(p.id);

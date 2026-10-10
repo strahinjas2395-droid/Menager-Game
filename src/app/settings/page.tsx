@@ -84,10 +84,10 @@ export default function SettingsPage() {
         <section className="card-panel mt-3 space-y-2">
           <span className="stat-label">Tactical language AI</span>
           <p className="text-[11px] leading-relaxed text-white/50">
-            Natural-language team and player instructions use a small hosted model through Puter. There is no developer API key or local model download, so it stays light on phones. Puter may ask you to sign in the first time.
+            Instructions use a compact MiniLM semantic model in your browser. On first use it downloads the roughly 23 MB quantized model and small WASM runtime, then the browser cache reuses them. No account, API key, subscription or dedicated GPU is required.
           </p>
           <p className="rounded-lg border border-white/10 bg-navy px-3 py-2 text-[10px] leading-relaxed text-white/35">
-            The instruction and fictional squad context are sent for interpretation. Validated results are cached in your save; if cloud AI is unavailable, the game clearly labels its limited offline fallback.
+            Your instruction and squad context stay on this device during inference. Every result is validated and cached in the career save; if the local model cannot load, the game clearly labels its limited basic fallback.
           </p>
         </section>
 
