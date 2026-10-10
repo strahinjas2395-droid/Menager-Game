@@ -6,6 +6,7 @@ import {
   type DribblePlanInput,
   type MovementOpponent,
 } from "@/engine/movementPatterns";
+import { iconicPrimeProfileId } from "@/engine/iconicPrimeProfiles";
 import { PlayStyle, PlaystyleTag, PrimaryPosition, type Player } from "@/types";
 
 function player(overrides: Partial<Player> = {}): Player {
@@ -195,6 +196,44 @@ describe("contextual dribble movement", () => {
     expect(open.safeKnockOnM).toBeGreaterThan(4.2);
     expect(covered.safeKnockOnM).toBeLessThan(open.safeKnockOnM);
     expect(covered.pitchControl).toBeLessThan(open.pitchControl);
+  });
+
+  it("turns iconic dribbling fingerprints into different routes and physical touch lengths", () => {
+    const common = {
+      current: { x: 500, y: 325 },
+      velocity: { x: 35, y: 0 },
+      role: "CAM",
+      tacticalRole: "AttackingMidfielder",
+      opponents: [
+        opponent("duel", 535, 325),
+        opponent("cover", 645, 255),
+      ],
+      pressure: 0.46,
+      phase: "create" as const,
+    };
+    const closeController = rankDribbleRoutes(input({
+      ...common,
+      player: player({
+        preferredFoot: "Right",
+        iconicPrimeProfileId: iconicPrimeProfileId("Ronaldo Gaucho"),
+      }),
+    }));
+    const channelRunner = rankDribbleRoutes(input({
+      ...common,
+      player: player({
+        preferredFoot: "Right",
+        iconicPrimeProfileId: iconicPrimeProfileId("Erling Haland"),
+      }),
+    }));
+    const gauchoFeint = closeController.find((route) => route.pattern === "feintAndGo")!;
+    const halandFeint = channelRunner.find((route) => route.pattern === "feintAndGo")!;
+
+    expect(gauchoFeint.score).toBeGreaterThan(halandFeint.score + 9);
+    expect(gauchoFeint.touchScale).toBeLessThan(halandFeint.touchScale);
+    expect(rankDribbleRoutes(input({
+      ...common,
+      player: player({ preferredFoot: "Right", iconicPrimeProfileId: iconicPrimeProfileId("Ronaldo Gaucho") }),
+    }))).toEqual(closeController);
   });
 
   it("mirrors equivalent away-team routes without changing the decision", () => {

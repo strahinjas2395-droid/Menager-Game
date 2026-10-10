@@ -25,8 +25,9 @@ npm run build      # production build
 ## The game
 
 - **20 leagues across 15 nations** (5 nations have two divisions with promotion/relegation),
-  400 recognisable fictional clubs, and ~10,000 generated players with position-compatible
-  mixed-era iconic aliases — all deterministic from a seed.
+  400 recognisable fictional clubs, and ~10,000 generated players. Exactly 109 position-compatible
+  mixed-era iconic aliases receive explicit prime-era mechanical profiles — all deterministic from
+  a seed.
 - **42-week season**: 38 double round-robin league weeks, domestic cup rounds
   (weeks 7/14/21/28/35), an 8-group continental championship with single-leg knockouts
   (weeks 30/33/36/40), and transfer windows in weeks 1–4 and 19–22.
@@ -45,6 +46,12 @@ npm run build      # production build
   byline bursts, half-space/line-breaking carries, feints and pressure escapes with separate
   ball touches. Nearby players recognise underlaps, come-short angles, give-and-go runs and
   far-post cross-receiver movement while the rest of the side preserves its shape.
+- **Iconic prime identities**: every transformed alias has an explicit peak window, body profile,
+  preferred foot, scouting fingerprint and signature actions. Separate dribbling, shooting,
+  passing and receiving tendencies alter route choice, touch length, movement beyond/to the ball,
+  pass and shot selection, technique, first-touch orientation and goalkeeper starting position.
+  Attributes still resolve execution, tendencies remain deterministic, and no aggregate/overall
+  rating is stored or calculated.
 - **Tactics setup**: 32 formations on a space-efficient vertical board, draggable pitch
   positions, traditional role numbers, tap-to-view player stat cards, dot-based controls,
   set-piece takers, captain, and persistent free-text instructions for both players and the

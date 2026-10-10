@@ -6,6 +6,7 @@ import {
   playerSprintSpeed,
 } from "@/engine/playerBrain";
 import { generatePlayer } from "@/database/playerGenerator";
+import { iconicPrimeProfileId } from "@/engine/iconicPrimeProfiles";
 import { PlayStyle, PlaystyleTag, PrimaryPosition, type Player } from "@/types";
 
 function player(overrides: Partial<Player> = {}): Player {
@@ -112,6 +113,52 @@ describe("player brain", () => {
     expect(target.intent).toBe("runBehind");
     expect(target.x).toBeGreaterThan(700);
     expect(target.x).toBeLessThan(740); // holds the shoulder until the pass is kicked
+  });
+
+  it("makes contrasting iconic nines choose their researched reception movement", () => {
+    const spatialInput = (p: Player) => ({
+      player: p,
+      playerIndex: 9,
+      role: "ST",
+      current: { x: 700, y: 325 },
+      baseTarget: { x: 725, y: 325 },
+      ball: { x: 520, y: 330 },
+      carrier: { x: 520, y: 330 },
+      teammates: [{ id: p.id, role: "ST", x: 700, y: 325 }],
+      opponents: [
+        { id: "press", role: "CDM", x: 540, y: 330 },
+        { id: "cb1", role: "CB", x: 805, y: 275 },
+        { id: "cb2", role: "CB", x: 810, y: 385 },
+      ],
+      attackingDirection: 1 as const,
+      style: PlayStyle.Balanced,
+      hasPossession: true,
+      transitionAge: 9,
+      runActive: false,
+      stayWide: false,
+      cutInside: false,
+      holdPosition: false,
+      forwardRuns: false,
+    });
+    const channelNine = player({
+      id: "channel-nine",
+      primaryPosition: PrimaryPosition.ST,
+      iconicPrimeProfileId: iconicPrimeProfileId("Erling Haland"),
+      playstyles: [],
+    });
+    const falseNine = player({
+      id: "false-nine",
+      primaryPosition: PrimaryPosition.ST,
+      iconicPrimeProfileId: iconicPrimeProfileId("Francesco Toti"),
+      playstyles: [],
+    });
+
+    const channelTarget = chooseSpatialTarget(spatialInput(channelNine));
+    const falseNineTarget = chooseSpatialTarget(spatialInput(falseNine));
+
+    expect(channelTarget.intent).toBe("runBehind");
+    expect(falseNineTarget.intent).toBe("comeShort");
+    expect(channelTarget.x).toBeGreaterThan(falseNineTarget.x + 100);
   });
 
   it("underlaps a wide carrier through the inside channel", () => {

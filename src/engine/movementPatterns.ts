@@ -8,6 +8,7 @@
  * matchSimulator.ts.
  */
 import { PlayStyle, PlaystyleTag, type Player, type TacticalDirectives } from "@/types";
+import { getIconicPrimeProfile } from "@/engine/iconicPrimeProfiles";
 
 const PITCH_W = 1000;
 const PITCH_H = 650;
@@ -383,6 +384,8 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
   const inwardFoot: Player["preferredFoot"] = upper ? "Right" : "Left";
   const isWideRole = ["RB", "LB", "RWB", "LWB", "RM", "LM", "RW", "LW"].includes(input.role);
   const isCentralRole = ["CDM", "CM", "CAM", "AM", "CF", "ST"].includes(input.role);
+  const prime = getIconicPrimeProfile(player);
+  const dribbling = prime?.dribbling;
   let bias = seed.base;
 
   if (seed.pattern === "insideCut") {
@@ -392,6 +395,7 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     if (hasTrait(player, PlaystyleTag.CreativeInsideForward)) bias += 9;
     if (input.tacticalRole === "InsideForward" || input.tacticalRole === "InvertedWinger") bias += 8;
     if (input.phase === "finish") bias += 5;
+    if (dribbling) bias += (dribbling.inside - 0.5) * 21 + (dribbling.closeControl - 0.5) * 5;
   }
 
   if (seed.pattern === "outsideDrive" || seed.pattern === "bylineDrive") {
@@ -402,6 +406,7 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     if (hasTrait(player, PlaystyleTag.CutbackSpecialist) && seed.pattern === "bylineDrive") bias += 8;
     if (input.style === PlayStyle.WingPlay) bias += 10;
     if (input.phase === "transition") bias += 4;
+    if (dribbling) bias += (dribbling.outside - 0.5) * 21 + (dribbling.burst - 0.5) * 7;
   }
 
   if (seed.pattern === "halfSpaceDrive") {
@@ -410,6 +415,7 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     if (input.style === PlayStyle.TotalFootball) bias += 7;
     if (["Mezzala", "AdvancedPlaymaker", "InvertedFullBack", "InvertedWinger"].includes(input.tacticalRole ?? "")) bias += 7;
     if (wide && instructions.cutInside) bias += 6;
+    if (dribbling) bias += (dribbling.closeControl - 0.5) * 10 + (dribbling.inside - 0.5) * 6;
   }
 
   if (seed.pattern === "centralLineBreak") {
@@ -418,6 +424,7 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     if (input.phase === "transition") bias += 8;
     if (input.style === PlayStyle.DirectCounterAttack || input.style === PlayStyle.GegenpressingStyle) bias += 5;
     if (hasTrait(player, PlaystyleTag.PaceAbuser) && metrics.safeKnockOnM > 5) bias += 6;
+    if (dribbling) bias += (dribbling.burst - 0.5) * 15 + (dribbling.frequency - 0.5) * 5;
   }
 
   if (seed.pattern === "escapeTurn") {
@@ -427,6 +434,7 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     if (input.phase === "buildUp") bias += 3;
     if (instructions.holdPosition || instructions.defensiveDuty) bias += 13;
     if (input.beatenOpponentId) bias -= 11;
+    if (dribbling) bias += (dribbling.escape - 0.5) * 18 + (dribbling.shielding - 0.5) * 7;
   }
 
   if (seed.pattern === "feintAndGo") {
@@ -434,6 +442,7 @@ function patternBias(input: DribblePlanInput, seed: RouteSeed, metrics: RouteMet
     bias += (player.dribbling + player.agility + player.flair - 36) * 0.3;
     if (hasTrait(player, PlaystyleTag.Dribbler)) bias += 10;
     if (input.beatenOpponentId) bias += 18;
+    if (dribbling) bias += (dribbling.feint - 0.5) * 20 + (dribbling.closeControl - 0.5) * 6;
   }
 
   if (seed.targeted) {
@@ -457,8 +466,21 @@ function movementProfile(pattern: DribblePattern, phase: CarryPhase, distanceM: 
   const burst = pattern === "outsideDrive" || pattern === "bylineDrive" ||
     (pattern === "centralLineBreak" && phase === "transition");
   const closeControl = pattern === "insideCut" || pattern === "feintAndGo" || pattern === "escapeTurn";
-  const intensity = burst ? 0.94 : pattern === "halfSpaceDrive" ? 0.76 : closeControl ? 0.69 : 0.8;
-  const touchScale = burst ? 1.24 : closeControl ? 0.78 : 1;
+  const prime = getIconicPrimeProfile(player)?.dribbling;
+  const burstTendency = prime?.burst ?? 0.5;
+  const controlTendency = prime?.closeControl ?? 0.5;
+  const intensity = clamp(
+    (burst ? 0.94 + (burstTendency - 0.5) * 0.16 : pattern === "halfSpaceDrive" ? 0.76 : closeControl ? 0.69 : 0.8),
+    0.58,
+    1,
+  );
+  // This changes the physical distance between ball contacts: close-control
+  // icons take visibly shorter touches; burst carriers push farther into grass.
+  const touchScale = clamp(
+    burst ? 1.08 + burstTendency * 0.34 : closeControl ? 0.94 - controlTendency * 0.3 : 1,
+    0.62,
+    1.42,
+  );
   const estimatedMps = 3.3 + player.pace * 0.08 + player.acceleration * 0.045;
   return {
     intensity,

@@ -48,8 +48,11 @@ import {
   resolvePenalty,
   resolveShot,
   resolveTackle,
+  type DribbleTechnique,
+  type ShotTechnique,
 } from "@/engine/actionResolver";
 import { getFormation, mirrorFormation } from "@/engine/formations";
+import { getIconicPrimeProfile } from "@/engine/iconicPrimeProfiles";
 import { mergeDirectives, type PlayerDirectives } from "@/engine/directives";
 import { buildAIOpponentMatchPlan, sanitizeOpponentMatchPlan } from "@/engine/matchPlan";
 import { MATCH_TIME_SCALE } from "@/engine/matchClock";
@@ -257,6 +260,20 @@ export interface PassTarget {
   long?: boolean;
 }
 
+/** Personal passing-choice bias layered on top of team tactics and lane value. */
+export function iconicPassFlavorBias(player: Player, flavor: PassFlavor, risky = false): number {
+  const prime = getIconicPrimeProfile(player);
+  if (!prime) return 0;
+  let bias =
+    flavor === "through" ? (prime.passing.through - 0.5) * 25 :
+    flavor === "switch" ? (prime.passing.switch - 0.5) * 22 :
+    flavor === "pullback" ? (prime.passing.crossing - 0.5) * 15 :
+    flavor === "driven" || flavor === "lofted" ? (prime.passing.directness - 0.5) * 14 :
+    (prime.passing.combination - 0.5) * 16;
+  if (risky) bias += (prime.passing.risk - 0.5) * 14;
+  return bias;
+}
+
 interface Flight {
   kind: "pass" | "shot" | "cross" | "knockOn";
   fromX: number;
@@ -268,6 +285,7 @@ interface Flight {
   side: Side;
   targetIdx?: number;
   shotOutcome?: { goal: boolean; saved: boolean; blocked: boolean; wide: boolean };
+  shotTechnique?: ShotTechnique;
   passOutcome?: { success: boolean; intercepted: boolean };
   /** arc height in game units (lofted passes, crosses) */
   arcH?: number;
@@ -384,6 +402,26 @@ export function shotDecisionProbability(
   if ((role === "CB" || role === "CDM") && !shootMore) urge *= 0.42;
   if (distanceM >= 39) urge = 0.001;
   return clamp(urge, 0.001, 0.92);
+}
+
+/** Context-sensitive technique menu; exported for deterministic contrast tests. */
+export function shotTechniqueWeights(
+  player: Player,
+  distanceM: number,
+  firstTimeWindow: boolean,
+  pressure: number,
+): Record<ShotTechnique, number> {
+  const shooting = getIconicPrimeProfile(player)?.shooting;
+  const placed = shooting?.placement ?? 0.62;
+  const power = shooting?.power ?? 0.58;
+  const chip = shooting?.chip ?? 0.28;
+  const firstTime = shooting?.firstTime ?? 0.5;
+  return {
+    placed: 0.22 + placed * (distanceM < 23 ? 1.25 : 0.65),
+    power: 0.18 + power * (distanceM >= 18 ? 1.32 : 0.72),
+    chip: distanceM < 19 && pressure < 0.58 ? 0.025 + chip * 0.62 : 0.01,
+    firstTime: firstTimeWindow ? 0.04 + firstTime * 1.05 : 0.025 + firstTime * 0.08,
+  };
 }
 
 interface SetPiece {
@@ -1889,14 +1927,18 @@ export class MatchSimulator {
         // retreats in a low block.
         if (sp.role === "GK") {
           const distToOwn = Math.abs(this.ball.x - this.ownGoalX(side));
-          const sweeperKeeper = sp.roleAssignment.role === "SweeperKeeper";
+          const primeKeeper = getIconicPrimeProfile(sp.p);
+          const iconicSweeper = primeKeeper?.archetype === "sweeperKeeper";
+          const iconicTraditional = primeKeeper?.archetype === "traditionalKeeper";
+          const sweeperKeeper = sp.roleAssignment.role === "SweeperKeeper" || iconicSweeper;
           const dutySweep = sp.roleAssignment.duty === "Attack" ? 40 : sp.roleAssignment.duty === "Support" ? 24 : 10;
-          const roleSweep = sweeperKeeper && !park ? dutySweep : 0;
+          const roleSweep = sweeperKeeper && !park ? dutySweep + (iconicSweeper ? 22 : 0) : 0;
           const sweep = park ? 0 : (line + (hasBall ? 1 : 0)) * 6;
-          const goalOffset = clamp(42 + Math.min(distToOwn, 350) * 0.035 + sweep + roleSweep, 40, 135);
+          const traditionalOffset = iconicTraditional ? -12 : 0;
+          const goalOffset = clamp(42 + Math.min(distToOwn, 350) * 0.035 + sweep + roleSweep + traditionalOffset, 36, 158);
           sp.tx = side === "home" ? goalOffset : PITCH_W - goalOffset;
-          sp.ty = clamp(325 + (this.ball.y - 325) * (sweeperKeeper ? 0.36 : 0.27), 218, 432);
-          this.movePlayer(sp, dt, sweeperKeeper ? 0.46 : 0.34);
+          sp.ty = clamp(325 + (this.ball.y - 325) * (sweeperKeeper ? 0.4 : 0.27), 205, 445);
+          this.movePlayer(sp, dt, sweeperKeeper ? 0.5 : 0.34);
           return;
         }
 
@@ -2430,6 +2472,7 @@ export class MatchSimulator {
     const directive = this.directives(side, sp);
     const style = team.tactics.playStyle ?? PlayStyle.Balanced;
     const behavior = styleBehavior(style);
+    const prime = getIconicPrimeProfile(sp.p);
     const pressure = this.pressureOn(side, idx);
     const distanceFromOwnGoal = Math.abs(sp.x - this.ownGoalX(side));
     const nearbyAttackTargeting = this.attackingPlanNear(side, sp.x, sp.y);
@@ -2473,8 +2516,13 @@ export class MatchSimulator {
       const cutbackTalent = hasPlaystyle(sp.p, PlaystyleTag.CutbackSpecialist);
       const cutback = nearByline && this.rng.chance(cutbackTalent ? 0.9 : 0.68);
       const crossTrait = hasPlaystyle(sp.p, PlaystyleTag.Crosser) ? 0.14 : 0;
+      const iconicCrossing = ((prime?.passing.crossing ?? 0.5) - 0.5) * 0.28;
       const plannedAerialAttack = nearbyAttackPlan?.attackApproach === "aerial" ? 0.2 : 0;
-      if (this.rng.chance(clamp((crossBase + sp.p.crossing * 0.006 + crossTrait + plannedAerialAttack) * behavior.crossing, 0.025, 0.86))) {
+      if (this.rng.chance(clamp(
+        (crossBase + sp.p.crossing * 0.006 + crossTrait + iconicCrossing + plannedAerialAttack) * behavior.crossing,
+        0.015,
+        0.9,
+      ))) {
         this.executeCross(side, sp, cutback);
         return;
       }
@@ -2499,6 +2547,11 @@ export class MatchSimulator {
     if (sp.roleAssignment.role === "Poacher" && distToGoal < 18) shootUrge *= 1.35;
     if (sp.roleAssignment.role === "ShadowStriker" && distToGoal < 23) shootUrge *= 1.22;
     if (sp.roleAssignment.role === "AdvancedPlaymaker" && sp.roleAssignment.duty === "Support") shootUrge *= 0.62;
+    if (prime) {
+      shootUrge *= 0.42 + prime.shooting.frequency * 1.16;
+      if (distToGoal >= 18) shootUrge *= 0.34 + prime.shooting.range * 1.34;
+      if (this.worldTime - this.carrierSince < 0.6) shootUrge *= 0.72 + prime.shooting.firstTime * 0.48;
+    }
     if (directive.avoidShooting) shootUrge = 0.001;
     else if (directive.defensiveDuty) shootUrge *= 0.28;
 
@@ -2517,8 +2570,10 @@ export class MatchSimulator {
     const carryQuality = (sp.p.dribbling + sp.p.ballControl + sp.p.decisions) / 60;
     const plannedCarry = nearbyAttackPlan?.attackApproach === "pace" ? 0.2 :
       nearbyAttackPlan?.attackApproach === "dribble" ? 0.16 : 0;
+    const iconicCarry = ((prime?.dribbling.frequency ?? 0.5) - 0.5) * 0.32;
     const carryUrge = clamp(
-      (0.08 + carryQuality * 0.2) * behavior.carryBias + (directive.dribbleMore ? 0.18 : 0) + plannedCarry -
+      (0.08 + carryQuality * 0.2) * behavior.carryBias + iconicCarry +
+        (directive.dribbleMore ? 0.18 : 0) + plannedCarry -
         (directive.dribbleLess || directive.shortPassing ? 0.13 : 0),
       0.025,
       0.7,
@@ -2536,7 +2591,8 @@ export class MatchSimulator {
         carryRoute.safeKnockOnM >= 4.2 &&
         this.worldTime - sp.lastKnockOnAt > 2.2 &&
         this.rng.chance(clamp(
-          (paceAbuser ? 0.58 : 0.3) * behavior.directness * behavior.transition * behavior.carryBias,
+          (paceAbuser ? 0.58 : 0.3) * behavior.directness * behavior.transition * behavior.carryBias *
+            (0.42 + (prime?.dribbling.burst ?? 0.5) * 1.12),
           0.04,
           0.82,
         ))
@@ -2583,8 +2639,10 @@ export class MatchSimulator {
     if (pressure > 0.62) {
       const defender = this.closestOpponent(side, sp);
       const targetManStyle = directive.targetMan || hasPlaystyle(sp.p, PlaystyleTag.TargetMan);
-      const seekShield = targetManStyle || sp.p.strength + sp.p.balance >= 27;
-      if (defender && seekShield && this.rng.chance(targetManStyle ? 0.58 : 0.32)) {
+      const iconicShielding = prime?.dribbling.shielding ?? 0.5;
+      const seekShield = targetManStyle || iconicShielding > 0.72 || sp.p.strength + sp.p.balance >= 27;
+      const shieldUrge = (targetManStyle ? 0.58 : 0.26) + (iconicShielding - 0.5) * 0.36;
+      if (defender && seekShield && this.rng.chance(clamp(shieldUrge, 0.12, 0.82))) {
         if (resolveHoldOff(sp.p, defender.p, this.rng)) {
           defender.tackleCd = Math.max(defender.tackleCd, 0.65);
           this.installDribblePlan(side, sp, defender.p.id);
@@ -2599,6 +2657,7 @@ export class MatchSimulator {
     // Dribbling is a purposeful instruction/style choice, not the universal
     // response to pressure. "Release early" strongly suppresses it.
     let dribbleP = (0.1 + sp.p.dribbling * 0.013 + sp.p.flair * 0.005) * behavior.carryBias;
+    dribbleP += ((prime?.dribbling.frequency ?? 0.5) - 0.5) * 0.4;
     if (directive.dribbleMore) dribbleP += 0.32;
     if (nearbyAttackPlan?.attackApproach === "dribble") dribbleP += 0.24;
     if (nearbyAttackPlan?.attackApproach === "pace") dribbleP += 0.1;
@@ -2613,7 +2672,13 @@ export class MatchSimulator {
         if (side === "home") this.stats.dribblesAttemptedHome += 1;
         else this.stats.dribblesAttemptedAway += 1;
         this.addPlayerStat(sp.p.id, "dribblesAttempted");
-        const res = resolveDribble(sp.p, defender.p, this.rng);
+        const dribbleTechnique: DribbleTechnique =
+          carryRoute.pattern === "feintAndGo" ? "feint" :
+          carryRoute.pattern === "escapeTurn" ? (prime?.dribbling.shielding ?? 0.5) > 0.76 ? "shield" : "closeControl" :
+          carryRoute.pattern === "outsideDrive" || carryRoute.pattern === "bylineDrive" || carryRoute.pattern === "centralLineBreak"
+            ? "burst"
+            : "closeControl";
+        const res = resolveDribble(sp.p, defender.p, this.rng, dribbleTechnique);
         this.statsTackleAttempt(this.other(side), defender.p.id);
         if (res.foul) {
           this.recordTacticalEvent({
@@ -2824,8 +2889,12 @@ export class MatchSimulator {
     const teammates = this.players(side)
       .filter((p) => !p.sentOff && p !== sp && p.role !== "GK")
       .sort((a, b) => {
-        const as = a.p.offTheBall + a.p.heading + a.p.anticipation + (this.directives(side, a).targetMan ? 10 : 0);
-        const bs = b.p.offTheBall + b.p.heading + b.p.anticipation + (this.directives(side, b).targetMan ? 10 : 0);
+        const aPrime = getIconicPrimeProfile(a.p);
+        const bPrime = getIconicPrimeProfile(b.p);
+        const as = a.p.offTheBall + a.p.heading + a.p.anticipation +
+          ((aPrime?.shooting.aerial ?? 0.5) - 0.5) * 12 + (this.directives(side, a).targetMan ? 10 : 0);
+        const bs = b.p.offTheBall + b.p.heading + b.p.anticipation +
+          ((bPrime?.shooting.aerial ?? 0.5) - 0.5) * 12 + (this.directives(side, b).targetMan ? 10 : 0);
         return bs - as;
       });
     const receiver = teammates.find((p) => Math.abs(goalX - p.x) < (cutback ? 260 : 330)) ?? teammates[0];
@@ -2833,7 +2902,13 @@ export class MatchSimulator {
       this.decisionCd = this.decisionDelay(side, sp);
       return;
     }
-    const quality = (sp.p.crossing + sp.p.technique) / 40;
+    const passingPrime = getIconicPrimeProfile(sp.p)?.passing;
+    const quality = clamp(
+      (sp.p.crossing + sp.p.technique) / 40 +
+        ((passingPrime?.execution ?? 0.5) - 0.5) * 0.08,
+      0.2,
+      1,
+    );
     const error = (1 - quality) * 95;
     const toX = cutback
       ? clamp(goalX - dir * this.rng.float(120, 210), 20, 980)
@@ -2905,11 +2980,15 @@ export class MatchSimulator {
     const passerDirective = this.directives(side, sp);
     const baseProfile = PASS_PROFILE[style] ?? PASS_PROFILE.Balanced;
     const behavior = styleBehavior(style);
+    const prime = getIconicPrimeProfile(sp.p);
+    const personalRiskTolerance = prime
+      ? baseProfile.riskTol * 0.55 + prime.passing.risk * 0.45
+      : baseProfile.riskTol;
     const length = tactics.passingLength ?? TempoSetting.Normal;
     const pressure = this.pressureOn(side, myIdx);
     const preferred = clamp(
       baseProfile.shortPref + (length - TempoSetting.Normal) * 5.5 +
-        (behavior.directness - 1) * 9 +
+        (behavior.directness - 1) * 9 + ((prime?.passing.directness ?? 0.5) - 0.5) * 16 +
         (passerDirective.directPassing ? 11 : 0) - (passerDirective.shortPassing ? 7 : 0),
       7,
       39,
@@ -2925,6 +3004,7 @@ export class MatchSimulator {
       if (mate.role === "GK" && !(ownThird && (pressure > 0.42 || style === PlayStyle.PossessionBased))) return;
 
       const receiverDirective = this.directives(side, mate);
+      const receiverPrime = getIconicPrimeProfile(mate.p);
       const receiverTargeting = this.attackingPlanNear(side, mate.x, mate.y);
       const channelPlan = receiverTargeting && receiverTargeting.distance < 155
         ? receiverTargeting.instruction
@@ -2951,6 +3031,7 @@ export class MatchSimulator {
         mate.runUntil > this.worldTime ||
         mate.intent === "runBehind" ||
         hasPlaystyle(mate.p, PlaystyleTag.SpaceInterpreter) ||
+        (receiverPrime?.receiving.runBeyond ?? 0.5) > 0.72 ||
         ["ST", "CF", "RW", "LW", "CAM"].includes(mate.role);
       const roomAhead = this.opponentsWithin(side, mate.x + dir * 55, mate.y, 8) <= 1;
       const throughIntent =
@@ -2961,11 +3042,14 @@ export class MatchSimulator {
           tactics.counterAttack ||
           style === PlayStyle.TotalFootball ||
           channelPlan?.attackApproach === "pace" ||
+          (prime?.passing.through ?? 0.5) > 0.72 ||
           sp.p.creativity + sp.p.decisions > 27) &&
         !this.isOffside(side, mate.x, sp.x);
       if (throughIntent && this.rng.chance(clamp(
-        0.002 + sp.p.creativity * 0.0018 + baseProfile.riskTol * 0.035 +
+        0.002 + sp.p.creativity * 0.0018 + personalRiskTolerance * 0.035 +
           (behavior.runBehind - 1) * 0.035 +
+          ((prime?.passing.through ?? 0.5) - 0.5) * 0.22 +
+          ((receiverPrime?.receiving.runBeyond ?? 0.5) - 0.5) * 0.1 +
           (channelPlan?.attackApproach === "pace" ? 0.13 : 0) +
           (hasPlaystyle(sp.p, PlaystyleTag.ThroughBallSpecialist) ? 0.12 : 0),
         0.015,
@@ -2990,7 +3074,8 @@ export class MatchSimulator {
       const oppositeFlank = Math.abs(mate.y - sp.y) > 300;
       if (
         oppositeFlank && currentDistM > 28 &&
-        (style === PlayStyle.WingPlay || passerDirective.switchPlay || sp.p.longPassing >= 14) &&
+        (style === PlayStyle.WingPlay || passerDirective.switchPlay ||
+          (prime?.passing.switch ?? 0.5) > 0.72 || sp.p.longPassing >= 14) &&
         openness > 5.5
       ) {
         flavor = "switch";
@@ -3070,6 +3155,12 @@ export class MatchSimulator {
       }
       if (flavor === "switch") score += 9;
       if (flavor === "pullback") score += 14;
+      score += iconicPassFlavorBias(sp.p, flavor, risky);
+      if (receiverPrime) {
+        if (mate.intent === "comeShort") score += (receiverPrime.receiving.comeShort - 0.5) * 13;
+        if (mate.intent === "runBehind") score += (receiverPrime.receiving.runBeyond - 0.5) * 15;
+        if (currentDistM < 18) score += (receiverPrime.receiving.oneTouch - 0.5) * 8;
+      }
 
       // Individual instruction has final authority over team defaults.
       if (passerDirective.shortPassing && distM < 16) score += 12;
@@ -3101,7 +3192,7 @@ export class MatchSimulator {
 
       // Low-risk systems reject lanes they do not trust; risk-taking creators
       // can still attempt them.
-      if (risky && !passerDirective.riskyPasses) score -= (1 - baseProfile.riskTol) * 14;
+      if (risky && !passerDirective.riskyPasses) score -= (1 - personalRiskTolerance) * 14;
       if (this.isOffside(side, mate.x, sp.x) && progressUnits > 0) score -= 180;
       candidates.push({
         idx,
@@ -3264,12 +3355,13 @@ export class MatchSimulator {
 
     // Give-and-go behaviour: intelligent passers move immediately after a
     // short combination instead of freezing in their old formation slot.
+    const primeCombination = getIconicPrimeProfile(sp.p)?.passing.combination ?? 0.5;
     if (
       outcome.success && distM < 21 &&
       (this.team(side).tactics.playStyle === PlayStyle.TikiTaka ||
        this.team(side).tactics.playStyle === PlayStyle.TotalFootball ||
-       this.directives(side, sp).forwardRuns) &&
-      this.rng.chance(0.28 + sp.p.offTheBall * 0.018)
+       this.directives(side, sp).forwardRuns || primeCombination > 0.78) &&
+      this.rng.chance(clamp(0.18 + sp.p.offTheBall * 0.018 + primeCombination * 0.2, 0.2, 0.78))
     ) {
       sp.runUntil = this.worldTime + this.rng.float(2.1, 3.8);
     }
@@ -3304,6 +3396,22 @@ export class MatchSimulator {
     this.possessionSide = side;
   }
 
+  private chooseShotTechnique(sp: SimPlayer, distM: number, pressure: number): ShotTechnique {
+    const weights = shotTechniqueWeights(
+      sp.p,
+      distM,
+      this.worldTime - this.carrierSince < 0.62,
+      pressure,
+    );
+    const techniques = Object.entries(weights) as [ShotTechnique, number][];
+    let roll = this.rng.float(0, techniques.reduce((total, [, weight]) => total + weight, 0));
+    for (const [technique, weight] of techniques) {
+      roll -= weight;
+      if (roll <= 0) return technique;
+    }
+    return "placed";
+  }
+
   private executeShot(side: Side, sp: SimPlayer, distM: number): void {
     const defendingSide = this.other(side);
     const gk =
@@ -3317,7 +3425,8 @@ export class MatchSimulator {
       1,
     );
     const pressure = this.pressureOn(side, this.indexOfPlayer(side, sp));
-    const outcome = resolveShot(sp.p, gk.p, distM, angle, pressure, this.rng);
+    const technique = this.chooseShotTechnique(sp, distM, pressure);
+    const outcome = resolveShot(sp.p, gk.p, distM, angle, pressure, this.rng, technique);
 
     this.recordShot(side, sp.p.id, outcome.goal || outcome.saved);
     this.bumpRating(sp, outcome.goal ? 0 : -0.03);
@@ -3335,7 +3444,8 @@ export class MatchSimulator {
     let toY: number;
     if (outcome.goal) {
       toX = goalX - dir * 6;
-      toY = PITCH_H / 2 + this.rng.float(-30, 30);
+      const cornerBias = technique === "placed" ? this.rng.float(20, 36) * (this.rng.chance(0.5) ? -1 : 1) : 0;
+      toY = PITCH_H / 2 + cornerBias + this.rng.float(-12, 12);
     } else if (outcome.saved) {
       toX = goalX - dir * 40;
       toY = clamp(PITCH_H / 2 + this.rng.float(-60, 60), 100, 550);
@@ -3356,9 +3466,15 @@ export class MatchSimulator {
       toX,
       toY,
       t: 0,
-      dur: clamp(distM / this.rng.float(22, 32), 0.15, 1.8),
+      dur: clamp(
+        distM / (technique === "power" ? this.rng.float(29, 35) : technique === "chip" ? this.rng.float(15, 20) : this.rng.float(22, 30)),
+        0.15,
+        1.9,
+      ),
       side,
       shotOutcome: outcome,
+      shotTechnique: technique,
+      arcH: technique === "chip" ? this.rng.float(38, 62) : technique === "firstTime" ? this.rng.float(2, 10) : 0,
       passerId: sp.p.id,
     });
     this.lastTouchSide = side;
@@ -3399,9 +3515,11 @@ export class MatchSimulator {
       pressure,
       qualifier: f.penalty
         ? "penalty"
-        : f.movementPattern
-          ? `movement:${f.movementPattern}`
-          : f.flavor,
+        : f.shotTechnique
+          ? `shot:${f.shotTechnique}`
+          : f.movementPattern
+            ? `movement:${f.movementPattern}`
+            : f.flavor,
       expectedGoals: f.kind === "shot" ? expectedGoalsAt(start.x, start.y, pressure, f.penalty ? "penalty" : undefined) : undefined,
     });
     f.analyticsEventId = eventId;
@@ -3644,9 +3762,11 @@ export class MatchSimulator {
     const nearest = this.nearestOpponentDist(side, receiver.x, receiver.y);
     const pressure = clamp((5.5 - nearest) / 5.5, 0, 1);
     const firstTouchTrait = hasPlaystyle(receiver.p, PlaystyleTag.FirstTouchSpecialist);
+    const prime = getIconicPrimeProfile(receiver.p);
     const controlProbability = clamp(
       0.6 + receiver.p.ballControl * 0.016 + receiver.p.technique * 0.009 +
-        receiver.p.composure * 0.005 + (firstTouchTrait ? 0.11 : 0) -
+        receiver.p.composure * 0.005 + (firstTouchTrait ? 0.11 : 0) +
+        ((prime?.receiving.security ?? 0.5) - 0.5) * 0.14 -
         Math.max(0, speedMps - 13) * 0.018 - pressure * 0.17 - this.ballHeight * 0.006,
       0.42,
       0.97,
@@ -3655,6 +3775,24 @@ export class MatchSimulator {
       this.addPlayerStat(receiver.p.id, "touches");
       if (f.countsAsPass !== false) this.statsPassComplete(side, f.passerId, f.flavor === "pullback");
       this.giveBallTo(side, receiverIdx);
+      if (prime) {
+        // One-touch players release sooner; half-turn receivers physically begin
+        // a forward route when space permits instead of freezing after control.
+        this.decisionCd *= clamp(1.12 - prime.receiving.oneTouch * 0.62, 0.38, 0.9);
+        const route = this.chooseCarrierRoute(side, receiver);
+        const end = route.waypoints[route.waypoints.length - 1];
+        const forwardGain = (end.x - receiver.x) * this.attackDir(side);
+        const halfTurnUrge = prime.receiving.halfTurn * (1 - pressure) *
+          (0.55 + prime.dribbling.frequency * 0.45);
+        if (
+          pressure < 0.58 && forwardGain > 24 && route.pitchControl > 0.4 &&
+          this.rng.chance(clamp(halfTurnUrge, 0.05, 0.88))
+        ) {
+          this.installDribblePlan(side, receiver, undefined, route);
+          receiver.runUntil = Math.max(receiver.runUntil, this.worldTime + 0.55 + prime.dribbling.burst * 0.55);
+          this.decisionCd = Math.min(this.decisionCd, 0.18 + (1 - prime.receiving.halfTurn) * 0.28);
+        }
+      }
       return;
     }
 
@@ -4262,7 +4400,10 @@ export class MatchSimulator {
     let best = -1;
     let bestScore = -Infinity;
     this.players(side).forEach((sp, idx) => {
-      if (sp.sentOff || sp.role === "GK") return;
+      if (sp.sentOff) return;
+      const prime = getIconicPrimeProfile(sp.p);
+      const setPieceKeeper = sp.role === "GK" && prime?.archetype === "setPieceKeeper";
+      if (sp.role === "GK" && !(setPieceKeeper && (kind === "freeKick" || kind === "penalty"))) return;
       const score =
         kind === "corner" ? sp.p.crossing * 2 + sp.p.technique + (hasPlaystyle(sp.p, PlaystyleTag.Crosser) ? 8 : 0) :
         kind === "freeKick" ? sp.p.freeKickAccuracy * 2 + sp.p.technique + sp.p.longShots * 0.4 :
@@ -4581,7 +4722,11 @@ export class MatchSimulator {
           clamp(0.75 - angle * 0.5 + (taker.p.freeKickAccuracy - 10) * 0.04, 0.2, 0.9),
         );
         if (useDirect) {
-          const outcome = resolveShot(taker.p, gk.p, distToGoal, angle, 0.45, this.rng);
+          const primeShot = getIconicPrimeProfile(taker.p)?.shooting;
+          const technique: ShotTechnique = (primeShot?.power ?? 0.5) > (primeShot?.placement ?? 0.5)
+            ? "power"
+            : "placed";
+          const outcome = resolveShot(taker.p, gk.p, distToGoal, angle, 0.45, this.rng, technique);
           this.recordShot(side, taker.p.id, outcome.goal || outcome.saved);
           let toX: number;
           let toY: number;
@@ -4612,6 +4757,7 @@ export class MatchSimulator {
             dur: clamp(distToGoal / this.rng.float(20, 28), 0.2, 1.8),
             side,
             shotOutcome: outcome,
+            shotTechnique: technique,
             passerId: taker.p.id,
           });
           this.lastTouchSide = side;

@@ -11,6 +11,7 @@ import {
   resolveTackle,
 } from "@/engine/actionResolver";
 import { SeededRNG } from "@/database/rng";
+import { iconicPrimeProfileId } from "@/engine/iconicPrimeProfiles";
 import { PlaystyleTag, type Player } from "@/types";
 
 /** Minimal stat carrier — actionResolver only reads named attributes. */
@@ -149,6 +150,31 @@ describe("actionResolver", () => {
     }
     expect(beats / N).toBeGreaterThan(0.4);
     expect(beats / N).toBeLessThan(0.6);
+  });
+
+  it("keeps iconic technique familiarity contextual while equal attributes still execute it", () => {
+    const closeControlRng = new SeededRNG(111);
+    const channelRng = new SeededRNG(111);
+    const defender = P({ tackling: 12, positioning: 12, pace: 12 });
+    const common = { dribbling: 12, agility: 12, pace: 12, flair: 12 };
+    const closeController = P({
+      ...common,
+      iconicPrimeProfileId: iconicPrimeProfileId("Ronaldo Gaucho"),
+    });
+    const channelFinisher = P({
+      ...common,
+      iconicPrimeProfileId: iconicPrimeProfileId("Erling Haland"),
+    });
+    let controllerBeats = 0;
+    let channelBeats = 0;
+    const N = 3000;
+    for (let i = 0; i < N; i++) {
+      if (resolveDribble(closeController, defender, closeControlRng, "feint").beat) controllerBeats++;
+      if (resolveDribble(channelFinisher, defender, channelRng, "feint").beat) channelBeats++;
+    }
+
+    expect(controllerBeats).toBeGreaterThan(channelBeats + 90);
+    expect(controllerBeats / N).toBeLessThan(0.7);
   });
 
   it("resolveHeader: attacker wins more with better aerial stats", () => {

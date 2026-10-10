@@ -1,5 +1,6 @@
 import { PlayStyle, PlaystyleTag, type Player } from "@/types";
 import { clamp } from "@/database/rng";
+import { getIconicPrimeProfile } from "@/engine/iconicPrimeProfiles";
 
 export type PlayerIntent =
   | "hold"
@@ -208,6 +209,10 @@ function clampPoint(point: BrainPoint): BrainPoint {
  */
 export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResult {
   const profile = styleBehavior(input.style);
+  const prime = getIconicPrimeProfile(input.player);
+  const primeRunBeyond = prime?.receiving.runBeyond ?? 0.5;
+  const primeComeShort = prime?.receiving.comeShort ?? 0.5;
+  const primeCombination = prime?.passing.combination ?? 0.5;
   const dir = input.attackingDirection;
   const selfId = input.player.id;
   const carrier = input.carrier ?? input.ball;
@@ -240,7 +245,7 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
 
     const spaceReader = hasPlaystyle(input.player, PlaystyleTag.SpaceInterpreter);
     const wantsRun = input.runActive || input.forwardRuns || spaceReader ||
-      (forwardRole && profile.runBehind > 1.18);
+      (forwardRole && (profile.runBehind > 1.18 || primeRunBeyond > 0.72));
     if (wantsRun && forwardRole) {
       const line = secondLastDefenderX(input.opponents, dir);
       const startOnside = line - dir * 18;
@@ -253,7 +258,7 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
           : Math.max(input.current.x - beyond, startOnside),
         y: input.cutInside ? 325 + (input.current.y - 325) * 0.35 : input.current.y + laneSign * 24,
         intent: "runBehind",
-        bias: 9 * profile.runBehind + (spaceReader ? 8 : 0),
+        bias: 9 * profile.runBehind + (spaceReader ? 8 : 0) + (primeRunBeyond - 0.5) * 18,
       });
     }
 
@@ -296,15 +301,16 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
     // lets possession teams escape a press through a third-player angle.
     const aheadOfCarrier = (input.current.x - carrier.x) * dir;
     if (
-      forwardRole && aheadOfCarrier > 60 && aheadOfCarrier < 280 &&
-      (carrierPressure < 72 || profile.circulation > 1.25)
+      forwardRole && aheadOfCarrier > 45 && aheadOfCarrier < 300 &&
+      (carrierPressure < 72 || profile.circulation > 1.25 || primeComeShort > 0.72)
     ) {
       candidates.push({
         x: carrier.x + dir * (58 + profile.supportDistance * 1.8),
         y: carrier.y + laneSign * Math.min(72, support * 0.45),
         intent: "comeShort",
         bias: 9 + (carrierPressure < 55 ? 7 : 0) + profile.circulation * 3 +
-          (hasPlaystyle(input.player, PlaystyleTag.Playmaker) ? 4 : 0),
+          (hasPlaystyle(input.player, PlaystyleTag.Playmaker) ? 4 : 0) +
+          (primeComeShort - 0.5) * 20,
       });
     }
 
@@ -316,7 +322,8 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
         x: carrier.x + dir * (88 + input.player.acceleration * 2.8),
         y: carrier.y + laneSign * 48,
         intent: "giveAndGo",
-        bias: 17 + input.player.offTheBall * 0.35 + profile.circulation * 2,
+        bias: 17 + input.player.offTheBall * 0.35 + profile.circulation * 2 +
+          (primeCombination - 0.5) * 14,
       });
     }
 
@@ -333,7 +340,8 @@ export function chooseSpatialTarget(input: SpatialBrainInput): SpatialBrainResul
         y: carrier.y < 325 ? 445 : 205,
         intent: "crossReceiver",
         bias: 10 + profile.crossing * 5 + input.player.offTheBall * 0.2 +
-          (hasPlaystyle(input.player, PlaystyleTag.Poacher) || hasPlaystyle(input.player, PlaystyleTag.AerialThreat) ? 5 : 0),
+          (hasPlaystyle(input.player, PlaystyleTag.Poacher) || hasPlaystyle(input.player, PlaystyleTag.AerialThreat) ? 5 : 0) +
+          (primeRunBeyond - 0.5) * 12 + ((prime?.shooting.aerial ?? 0.5) - 0.5) * 8,
       });
     }
 

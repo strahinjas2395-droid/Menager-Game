@@ -218,6 +218,8 @@ export interface PlayerInjury {
 export interface Player {
   // Identity
   id: string;
+  /** Optional engine profile for a transformed prime-era iconic identity. */
+  iconicPrimeProfileId?: string;
   /** Free-text manager note; interpreted to a validated cached tactical plan. */
   individualInstructions?: string;
   firstName: string;

@@ -5,6 +5,7 @@
  * without reproducing an official club or player identity verbatim. The game
  * does not use badges, photographs, official kits or licensed competition data.
  */
+import { applyIconicPrimeProfile, getIconicPrimeProfileByAlias } from "@/engine/iconicPrimeProfiles";
 import { PlaystyleTag, PrimaryPosition, type Player } from "@/types";
 
 export type ClubIdentityKey =
@@ -445,7 +446,10 @@ function positionalScore(player: Player, position: PrimaryPosition): number {
   }
 }
 
-/** Mutates display identity only; generated attributes, ids and contracts stay deterministic. */
+/**
+ * Applies the transformed identity and its deterministic prime-era mechanical
+ * profile. Stable ids and contracts are preserved; no aggregate rating exists.
+ */
 export function applyIconicPlayerAliases(clubName: string, squad: Player[]): Player[] {
   const aliases = ICONIC_PLAYER_ALIASES[clubName];
   if (!aliases?.length) return squad;
@@ -465,6 +469,10 @@ export function applyIconicPlayerAliases(clubName: string, squad: Player[]): Pla
     const selected = squad[candidate.index];
     selected.firstName = alias.firstName;
     selected.lastName = alias.lastName;
+    const transformedName = `${alias.firstName} ${alias.lastName}`;
+    const primeProfile = getIconicPrimeProfileByAlias(transformedName);
+    if (!primeProfile) throw new Error(`Missing iconic prime profile for ${transformedName}.`);
+    applyIconicPrimeProfile(selected, primeProfile);
     if (alias.playstyles?.length) {
       selected.playstyles = [...new Set([...alias.playstyles, ...selected.playstyles])].slice(0, 3);
     }

@@ -5,6 +5,7 @@ import {
   type IconicPlayerAlias,
 } from "@/database/footballIdentities";
 import { generateAllLeagues, LEAGUES_DATA, type GeneratedWorld } from "@/database/leagueGenerator";
+import { getIconicPrimeProfileByAlias } from "@/engine/iconicPrimeProfiles";
 import type { Player } from "@/types";
 
 const WORLD_SEED = 24_061_995;
@@ -59,6 +60,12 @@ describe("recognisable fictional football identities", () => {
           player.primaryPosition === alias.position || player.secondaryPositions.includes(alias.position),
           `${aliasName(alias)} was assigned to ${player.primaryPosition}`,
         ).toBe(true);
+        const profile = getIconicPrimeProfileByAlias(aliasName(alias));
+        expect(profile, `prime profile ${aliasName(alias)}`).toBeDefined();
+        expect(player.iconicPrimeProfileId).toBe(profile?.id);
+        expect(player.age).toBe(profile?.primeAge);
+        expect(player.height).toBe(profile?.height);
+        expect(player.weight).toBe(profile?.weight);
       }
     }
 
@@ -87,6 +94,7 @@ describe("recognisable fictional football identities", () => {
         lastName: player.lastName,
         primaryPosition: player.primaryPosition,
         secondaryPositions: player.secondaryPositions,
+        iconicPrimeProfileId: player.iconicPrimeProfileId,
         clubId: player.contract.clubId,
       })),
     });
