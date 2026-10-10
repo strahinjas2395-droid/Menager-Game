@@ -55,6 +55,7 @@ export function defaultTactics(formation = "4-3-3"): TacticalSetup {
     counterAttack: false,
     teamInstructions: "",
     instructionCache: { players: {} },
+    playerRoles: {},
     positionOverrides: {},
     setPieces: {
       cornerLeftId: null,
@@ -67,7 +68,6 @@ export function defaultTactics(formation = "4-3-3"): TacticalSetup {
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
-  defaultMatchSpeed: 2,
   soundVolume: 0.7,
   musicVolume: 0.4,
   vibration: true,
@@ -619,7 +619,14 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
 
     if (isUser) {
       side.opponentPlan = save.opponentPlans?.[fixtureId];
-      const roster = buildInstructionRoster(squad, side.starters, side.roles, side.displayNumbers);
+      const roster = buildInstructionRoster(
+        squad,
+        side.starters,
+        side.roles,
+        side.displayNumbers,
+        tactics.playerRoles,
+        tactics.playStyle,
+      );
       const plans = compileInstructionPlans(
         squad,
         tactics.teamInstructions ?? "",

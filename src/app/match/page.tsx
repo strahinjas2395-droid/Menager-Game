@@ -2,11 +2,18 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, Pause, Play, FastForward, Gauge, SlidersHorizontal, X, Check, LoaderCircle, Sparkles } from "lucide-react";
+import { BarChart3, Pause, Play, Gauge, SlidersHorizontal, X, Check, LoaderCircle, Sparkles } from "lucide-react";
 import MatchCanvas, { type MatchScene } from "@/components/MatchCanvas";
 import StepDots from "@/components/StepDots";
 import InstructionInterpretationView from "@/components/InstructionInterpretationView";
 import OpponentPlanEditor, { type PlanEditorPlayer } from "@/components/OpponentPlanEditor";
+import PlayerRoleEditor from "@/components/PlayerRoleEditor";
+import { formatMatchClock } from "@/engine/matchClock";
+import {
+  playerRoleDefinition,
+  resolvePlayerRoleAssignment,
+  retainCompatiblePlayerRoleAssignments,
+} from "@/engine/playerRoles";
 import { emptyOpponentMatchPlan } from "@/engine/matchPlan";
 import { getMatchContext, useGameStore, type MatchContext } from "@/store/gameStore";
 import { selectBestXI, type MatchSnapshot, type Side } from "@/engine/matchSimulator";
@@ -101,11 +108,6 @@ function MatchScreen() {
   const [fullTime, setFullTime] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [speed, setSpeed] = useState<1 | 2 | 4 | 8>(
-    (save?.settings.defaultMatchSpeed as 1 | 2 | 4 | 8) ?? 2,
-  );
-  const speedRef = useRef<1 | 2 | 4 | 8>(speed);
-  speedRef.current = speed;
   const [events, setEvents] = useState<MatchEvent[]>([]);
   const [goalCelebration, setGoalCelebration] = useState<GoalCelebrationView | null>(null);
   const goalCelebrationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -153,8 +155,10 @@ function MatchScreen() {
       roleAssignment.starters,
       roleAssignment.roles,
       stableNumbers,
+      liveTactics?.playerRoles,
+      liveTactics?.playStyle,
     );
-  }, [ctx, save, snapshot?.homeLineup, snapshot?.awayLineup, liveTactics?.formation]);
+  }, [ctx, save, snapshot?.homeLineup, snapshot?.awayLineup, liveTactics?.formation, liveTactics?.playerRoles, liveTactics?.playStyle]);
   const liveInstructionFingerprint = useMemo(
     () => instructionContextFingerprint(liveInstructionRoster),
     [liveInstructionRoster],
@@ -170,6 +174,7 @@ function MatchScreen() {
         team: source.instructionCache?.team,
         players: { ...(source.instructionCache?.players ?? {}) },
       },
+      playerRoles: { ...(source.playerRoles ?? {}) },
       positionOverrides: { ...source.positionOverrides },
       setPieces: { ...source.setPieces },
     });
@@ -226,7 +231,7 @@ function MatchScreen() {
               });
               sceneRef.current?.playGoalAnimation(scoringSide);
               if (goalCelebrationTimer.current) clearTimeout(goalCelebrationTimer.current);
-              const celebrationMs = Math.min(2300, Math.max(850, 7000 / speedRef.current - 100));
+              const celebrationMs = 2300;
               goalCelebrationTimer.current = setTimeout(() => {
                 setGoalCelebration(null);
                 goalCelebrationTimer.current = null;
@@ -257,12 +262,10 @@ function MatchScreen() {
       payload: {
         home: ctx.home,
         away: ctx.away,
-        options: { seed: ctx.seed, fixtureId: ctx.fixture.id, timeScale: 6, difficulty: save?.difficulty },
+        options: { seed: ctx.seed, fixtureId: ctx.fixture.id, difficulty: save?.difficulty },
       },
     });
     workerRef.current = worker;
-    // match UI highlight: sim defaults to 1x — push the selected speed immediately
-    worker.postMessage({ type: "speed", value: speedRef.current });
 
     return () => {
       cancelled = true;
@@ -282,23 +285,9 @@ function MatchScreen() {
     workerRef.current?.postMessage(msg);
   }, []);
 
-  const changeSpeed = (s: 1 | 2 | 4 | 8) => {
-    setSpeed(s);
-    post({ type: "speed", value: s });
-    if (paused && !halfTime && !fullTime) {
-      post({ type: "resume" });
-      setPaused(false);
-    }
-  };
-
   const togglePause = () => {
     post({ type: paused ? "resume" : "pause" });
     setPaused(!paused);
-  };
-
-  const skip = () => {
-    if (halfTime || fullTime) return;
-    post({ type: "skip" });
   };
 
   const openTactics = () => {
@@ -314,7 +303,6 @@ function MatchScreen() {
     setShowTactics(false);
     if (resumeAfterTactics.current) {
       post({ type: "resume" });
-      post({ type: "speed", value: speed });
       setPaused(false);
     }
     resumeAfterTactics.current = false;
@@ -407,7 +395,6 @@ function MatchScreen() {
     setHalfTime(false);
     setPaused(false);
     post({ type: "resumeHalf" });
-    post({ type: "speed", value: speed });
     if (pendingSub.dirty && ctx) {
       post({ type: "sub", side: userSide, starterIdx: pendingSub.off, benchIdx: pendingSub.on });
       setPendingSub({ off: 0, on: 0, dirty: false });
@@ -480,7 +467,7 @@ function MatchScreen() {
     );
   }
 
-  const clock = formatClock(snapshot?.gameTime ?? 0, snapshot?.addedTime90 ?? 0);
+  const clock = formatMatchClock(snapshot?.gameTime ?? 0);
   const homeClub = save.world.clubs[ctx.fixture.homeClubId]!;
   const awayClub = save.world.clubs[ctx.fixture.awayClubId]!;
 
@@ -564,19 +551,6 @@ function MatchScreen() {
               {paused ? <Play size={13} /> : <Pause size={13} />}
               {paused ? "Resume" : "Pause"}
             </button>
-            <div className="flex gap-1">
-              {([1, 2, 4, 8] as const).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => changeSpeed(s)}
-                  className={`rounded-lg px-2 py-1.5 text-[10px] font-bold transition ${
-                    speed === s ? "bg-gold text-navy" : "border border-white/10 bg-card text-white/60"
-                  }`}
-                >
-                  {s}x
-                </button>
-              ))}
-            </div>
             <button
               onClick={openTactics}
               disabled={fullTime}
@@ -586,10 +560,6 @@ function MatchScreen() {
             </button>
             <button onClick={() => setShowStats((v) => !v)} className="btn-dark flex items-center gap-1 px-2 py-1.5 text-[11px]">
               <Gauge size={13} /> Stats
-            </button>
-            <button onClick={skip} disabled={halfTime || fullTime}
-              className="btn-dark flex items-center gap-1 px-2 py-1.5 text-[11px] disabled:opacity-30" title="Skip to half / full time">
-              <FastForward size={13} /> Skip
             </button>
           </div>
 
@@ -846,12 +816,31 @@ function LiveTacticsPanel({
   const [localWarning, setLocalWarning] = useState<string | null>(null);
   const set = <K extends keyof TacticalSetup>(key: K, value: TacticalSetup[K]) =>
     onChange({ ...tactics, [key]: value });
+  const activeTacticalPlayers = currentLineup.flatMap((entry) => {
+    const player = instructionPlayers.find((candidate) => candidate.id === entry.playerId);
+    return player ? [player] : [];
+  });
+  const draftXI = activeTacticalPlayers.length === currentLineup.length
+    ? selectBestXI(activeTacticalPlayers, tactics.formation)
+    : null;
+  const draftPositions = new Map(
+    draftXI?.starters.map((player, index) => [player.id, draftXI.roles[index]]) ?? [],
+  );
   const activeIds = new Set(currentLineup.map((p) => p.playerId));
   const availableBench = bench.map((p, i) => ({ p, i })).filter(({ p }) => !activeIds.has(p.id));
   const selectedBenchIdx = availableBench.some(({ i }) => i === pendingSub.on)
     ? pendingSub.on
     : (availableBench[0]?.i ?? 0);
   const selectedInstructionText = instructionText[instructionPlayerId] ?? "";
+  const selectedLineupEntry = currentLineup.find((entry) => entry.playerId === instructionPlayerId);
+  const selectedDraftPosition = draftPositions.get(instructionPlayerId) ?? selectedLineupEntry?.position;
+  const selectedRoleAssignment = selectedDraftPosition
+    ? resolvePlayerRoleAssignment(
+        tactics.playerRoles?.[instructionPlayerId],
+        selectedDraftPosition,
+        tactics.playStyle,
+      )
+    : undefined;
   const selectedCached = tactics.instructionCache?.players[instructionPlayerId];
   const selectedInterpretation = isInterpretationCurrent(
     selectedCached,
@@ -925,7 +914,25 @@ function LiveTacticsPanel({
           <div className="mt-4 grid grid-cols-2 gap-3">
             <label className="text-[10px] text-white/45">
               Formation
-              <select value={tactics.formation} onChange={(e) => set("formation", e.target.value)}
+              <select value={tactics.formation} onChange={(e) => {
+                const formation = e.target.value;
+                const nextXI = activeTacticalPlayers.length === currentLineup.length
+                  ? selectBestXI(activeTacticalPlayers, formation)
+                  : null;
+                onChange({
+                  ...tactics,
+                  formation,
+                  playerRoles: retainCompatiblePlayerRoleAssignments(
+                    tactics.playerRoles,
+                    nextXI?.starters.map((player, index) => ({
+                      playerId: player.id,
+                      position: nextXI.roles[index],
+                    })) ?? [],
+                    tactics.playStyle,
+                  ),
+                  positionOverrides: {},
+                });
+              }}
                 className="mt-1 w-full rounded-lg border border-white/10 bg-card px-2 py-2 text-xs font-semibold text-white outline-none focus:border-gold">
                 {FORMATION_NAMES.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
@@ -1009,12 +1016,36 @@ function LiveTacticsPanel({
             </div>
             <select value={instructionPlayerId} onChange={(e) => setInstructionPlayerId(e.target.value)}
               className="mt-2 w-full rounded-lg border border-white/10 bg-navy px-2 py-2 text-[10px]">
-              {instructionPlayers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  #{currentLineup.find((line) => line.playerId === p.id)?.shirtNumber ?? p.shirtNumber} {p.firstName} {p.lastName} · {p.primaryPosition}
-                </option>
-              ))}
+              {instructionPlayers.map((p) => {
+                const line = currentLineup.find((entry) => entry.playerId === p.id);
+                const draftPosition = draftPositions.get(p.id);
+                const assignment = draftPosition
+                  ? resolvePlayerRoleAssignment(tactics.playerRoles?.[p.id], draftPosition, tactics.playStyle)
+                  : undefined;
+                return (
+                  <option key={p.id} value={p.id}>
+                    #{line?.shirtNumber ?? p.shirtNumber} {p.firstName} {p.lastName} · {draftPosition && assignment ? `${draftPosition} · ${assignment.role} ${assignment.duty}` : `Bench · ${p.primaryPosition}`}
+                  </option>
+                );
+              })}
             </select>
+            {selectedLineupEntry && selectedDraftPosition && selectedRoleAssignment ? (
+              <div className="mt-2">
+                <PlayerRoleEditor
+                  position={selectedDraftPosition}
+                  assignment={selectedRoleAssignment}
+                  compact
+                  onChange={(assignment) => onChange({
+                    ...tactics,
+                    playerRoles: { ...(tactics.playerRoles ?? {}), [instructionPlayerId]: assignment },
+                  })}
+                />
+              </div>
+            ) : (
+              <p className="mt-2 rounded-lg border border-white/10 bg-navy p-2 text-[9px] text-white/35">
+                Role and duty can be changed once this player is in the active XI.
+              </p>
+            )}
             <textarea value={selectedInstructionText}
               onChange={(e) => onInstructionText((v) => ({ ...v, [instructionPlayerId]: e.target.value }))}
               placeholder="Tell this player what you mean in any wording…" rows={2} maxLength={600}
@@ -1108,22 +1139,10 @@ function poisson(lambda: number, rng: SeededRNG): number {
   return k - 1;
 }
 
-function formatClock(gameTime: number, added: number): string {
-  const min = Math.floor(gameTime / 60);
-  if (min >= 90) {
-    if (added > 0) {
-      const extra = Math.min(min - 90, Math.max(1, Math.ceil(added / 60)));
-      return `90+${extra}'`;
-    }
-    return "90'";
-  }
-  return `${min}'`;
-}
-
 function LineupCol({
   entries, color, align = "left",
 }: {
-  entries: { playerId: string; shirtNumber: number; name: string; position: string; rating: number; goals: number; yellow: boolean; sentOff: boolean }[];
+  entries: MatchSnapshot["homeLineup"];
   color: string;
   align?: "left" | "right";
 }) {
@@ -1135,6 +1154,9 @@ function LineupCol({
           <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
           <span className="font-bold text-white/90">{e.shirtNumber}</span>
           <span className="truncate">{e.name}</span>
+          <span className="shrink-0 text-[7px] font-bold text-white/30" title={`${playerRoleDefinition(e.tacticalRole).label} · ${e.duty}`}>
+            {playerRoleDefinition(e.tacticalRole).shortLabel}-{e.duty[0]}
+          </span>
           {e.goals > 0 && <span className="text-gold">⚽{e.goals}</span>}
           {e.yellow && <span className="text-yellow-400">▮</span>}
           {e.sentOff && <span className="text-red-500">■</span>}

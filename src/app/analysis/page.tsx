@@ -6,6 +6,7 @@ import { ArrowLeft, BarChart3, CalendarDays, ChevronRight, Footprints, Target, U
 import BottomNav from "@/components/BottomNav";
 import PlayerHeatmap from "@/components/PlayerHeatmap";
 import { summarizeOpponentInstruction } from "@/engine/matchPlan";
+import { playerRoleDefinition } from "@/engine/playerRoles";
 import { useGameStore } from "@/store/gameStore";
 import {
   MATCH_HEATMAP_COLUMNS,
@@ -278,7 +279,7 @@ function MatchView({
                   }`}
                 >
                   <span className="text-center text-xs font-black text-white/45">{report.shirtNumber}</span>
-                  <span className="min-w-0"><span className="block truncate text-xs font-semibold">{report.playerName}</span><span className="block text-[9px] text-white/40">{report.position} · {report.minutesPlayed}&apos;</span></span>
+                  <span className="min-w-0"><span className="block truncate text-xs font-semibold">{report.playerName}</span><span className="block truncate text-[9px] text-white/40">{report.position}{report.tacticalRole ? ` · ${playerRoleDefinition(report.tacticalRole).shortLabel}-${report.duty?.[0] ?? "S"}` : ""} · {report.minutesPlayed}&apos;</span></span>
                   <span className="rounded bg-white/[0.07] px-1.5 py-1 text-xs font-black text-gold">{report.rating.toFixed(1)}</span>
                 </button>
               ))}
@@ -415,7 +416,9 @@ function PlayerDetail({ player }: { player: PlayerMatchAnalysis }) {
         <div>
           <div className="stat-label text-gold">Individual Analysis</div>
           <h2 className="mt-1 text-lg font-black">{player.playerName}</h2>
-          <p className="text-[10px] text-white/45">{player.position} · {player.started ? "Started" : `On ${player.minuteOn}'`} · {player.minutesPlayed} minutes</p>
+          <p className="text-[10px] text-white/45">
+            {player.position}{player.tacticalRole ? ` · ${playerRoleDefinition(player.tacticalRole).label} (${player.duty ?? "Support"})` : ""} · {player.started ? "Started" : `On ${player.minuteOn}'`} · {player.minutesPlayed} minutes
+          </p>
         </div>
         <div className="rounded-xl bg-gold/10 px-3 py-2 text-center"><div className="text-[9px] uppercase text-white/35">Rating</div><div className="text-xl font-black text-gold">{player.rating.toFixed(1)}</div></div>
       </div>

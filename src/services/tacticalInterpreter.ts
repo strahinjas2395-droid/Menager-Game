@@ -127,7 +127,7 @@ function systemPrompt(): string {
     "You are the semantic tactical coach inside a football-management simulation.",
     "Understand the manager's intended meaning rather than matching phrases. Accept any language the manager uses and be robust to spelling mistakes, slang, omitted words, paraphrase, compound instructions, and negation.",
     "Convert only into the supplied tactical tool schema. Never invent a player id, name, number, role, or capability.",
-    "A player can be referenced by first name, surname, squad number, tactical XI number, position, or formation role. Resolve that reference from ROSTER. A non-null tacticalNumber/role marks a player currently on the pitch; do not choose a bench or out-of-squad player as a pass recipient. If two players are genuinely ambiguous, report it in unsupported instead of guessing.",
+    "A player can be referenced by first name, surname, squad number, tactical XI number, position, formation role, explicit tacticalRole, or duty. Resolve that reference from ROSTER. A non-null tacticalNumber/role marks a player currently on the pitch; do not choose a bench or out-of-squad player as a pass recipient. If two players are genuinely ambiguous, report it in unsupported instead of guessing.",
     "For player scope, directives apply to SUBJECT; another player mentioned as a recipient belongs in preferredTargetId. For team scope, directives apply to everyone unless the wording addresses actors. Put actor-specific behavior in assignments, with one assignment for each clearly addressed roster player.",
     "Use preferredTargetId only for deliberate passes/service to that teammate. Set targetPriority according to emphasis and targetDelivery from the requested ball type. Long/lofted/high service is aerial; passes to feet/along the floor are ground.",
     "Use defensiveDuty when an attacker is asked to become part of the defensive shape, track back, or defend deeply; this is stronger than merely holdPosition. Use clearImmediately only for urgent safety-first disposal in dangerous defensive situations.",
@@ -147,6 +147,8 @@ export function buildTacticalInterpreterMessages(
     tacticalNumber: player.tacticalNumber ?? null,
     position: player.position,
     role: player.role ?? null,
+    tacticalRole: player.tacticalRole ?? null,
+    duty: player.duty ?? null,
   }));
   const requestPayload = requests.map((request) => ({
     key: request.key,

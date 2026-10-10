@@ -395,6 +395,46 @@ export interface SetPieceTakers {
   captainId: string | null;
 }
 
+export type PlayerDuty = "Defend" | "Support" | "Attack";
+
+export type TacticalPlayerRole =
+  | "Goalkeeper"
+  | "SweeperKeeper"
+  | "CentralDefender"
+  | "BallPlayingDefender"
+  | "Stopper"
+  | "CoverDefender"
+  | "WideCentreBack"
+  | "FullBack"
+  | "WingBack"
+  | "InvertedFullBack"
+  | "Anchor"
+  | "HalfBack"
+  | "BallWinningMidfielder"
+  | "DeepLyingPlaymaker"
+  | "CentralMidfielder"
+  | "BoxToBoxMidfielder"
+  | "Mezzala"
+  | "AdvancedPlaymaker"
+  | "AttackingMidfielder"
+  | "ShadowStriker"
+  | "Winger"
+  | "InsideForward"
+  | "InvertedWinger"
+  | "WidePlaymaker"
+  | "AdvancedForward"
+  | "PressingForward"
+  | "TargetForward"
+  | "Poacher"
+  | "FalseNine"
+  | "CompleteForward"
+  | "DeepLyingForward";
+
+export interface PlayerRoleAssignment {
+  role: TacticalPlayerRole;
+  duty: PlayerDuty;
+}
+
 export interface TacticalDirectives {
   // Shape and movement
   holdPosition?: boolean;
@@ -510,6 +550,8 @@ export interface TacticalSetup {
   teamInstructions?: string;
   /** Validated semantic plans. Text remains the source of truth; stale entries are ignored. */
   instructionCache?: TacticalInstructionCache;
+  /** Explicit role/duty overrides by player id; omitted entries use a position/style-aware default. */
+  playerRoles?: Record<string, PlayerRoleAssignment>;
   /** playerId -> pitch position override (x,y in 0-1000 / 0-650) */
   positionOverrides: Record<string, { x: number; y: number }>;
   setPieces: SetPieceTakers;
@@ -621,6 +663,9 @@ export interface PlayerMatchAnalysis {
   playerName: string;
   shirtNumber: number;
   position: string;
+  /** Structured tactical job used in this appearance; absent from legacy reports. */
+  tacticalRole?: TacticalPlayerRole;
+  duty?: PlayerDuty;
   started: boolean;
   minuteOn: number;
   minuteOff: number;
@@ -792,7 +837,8 @@ export interface GameSave {
 }
 
 export interface GameSettings {
-  defaultMatchSpeed: 1 | 2 | 4 | 8;
+  /** Legacy setting retained only so older imported saves remain readable; match pace is now fixed. */
+  defaultMatchSpeed?: 1 | 2 | 4 | 8;
   soundVolume: number;
   musicVolume: number;
   vibration: boolean;

@@ -2,7 +2,7 @@
  * matchWorker — runs MatchSimulator off the main thread.
  * Communicates via postMessage at up to 10 Hz.
  *
- * Main -> worker: init | start | pause | resume | speed | skip | sub | tactics | directives | opponentPlan | resumeHalf
+ * Main -> worker: init | start | pause | resume | sub | tactics | directives | opponentPlan | resumeHalf
  * Worker -> main: ready | state | event | halfTime | fullTime
  */
 import { MatchSimulator, type MatchSnapshot, type Side, type SimOptions, type TeamSide } from "./matchSimulator";
@@ -21,8 +21,6 @@ type InMsg =
   | { type: "pause" }
   | { type: "resume" }
   | { type: "resumeHalf" }
-  | { type: "speed"; value: 1 | 2 | 4 | 8 }
-  | { type: "skip" }
   | { type: "sub"; side: Side; starterIdx: number; benchIdx: number }
   | { type: "tactics"; side: Side; tactics: TacticalSetup }
   | { type: "opponentPlan"; side: Side; plan: OpponentMatchPlan }
@@ -35,6 +33,7 @@ type InMsg =
 
 let sim: MatchSimulator | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
+let lastTickAt = 0;
 
 function post(msg: unknown): void {
   (self as unknown as Worker).postMessage(msg);
@@ -42,9 +41,16 @@ function post(msg: unknown): void {
 
 function startLoop(): void {
   if (timer) return;
+  lastTickAt = performance.now();
   timer = setInterval(() => {
+    const now = performance.now();
+    // Use elapsed wall time rather than assuming every interval fires exactly
+    // on schedule. A modest cap prevents a backgrounded tab from fast-forwarding
+    // through the match when it becomes active again.
+    const dtReal = Math.min(0.25, Math.max(0, (now - lastTickAt) / 1_000));
+    lastTickAt = now;
     if (!sim) return;
-    sim.tick(0.1);
+    sim.tick(dtReal);
     if (sim.hasNewState()) {
       post({ type: "state", state: sim.getState() satisfies MatchSnapshot });
     }
@@ -89,23 +95,6 @@ self.onmessage = (ev: MessageEvent<InMsg>) => {
       sim?.resume(); // resumes from halftime into second half
       post({ type: "state", state: sim!.getState() });
       break;
-    case "speed":
-      if (sim) sim.setSpeed(msg.value);
-      break;
-    case "skip": {
-      if (!sim) break;
-      const wasHalf = sim.phase === "halftime";
-      if (wasHalf) {
-        // skip only works between halves -> just re-sync
-        post({ type: "state", state: sim.getState() });
-        break;
-      }
-      sim.skipToStop();
-      post({ type: "state", state: sim.getState() });
-      if (sim.phase === "halftime") post({ type: "halfTime" });
-      if (sim.phase === "fulltime") post({ type: "fullTime", state: sim.getState() });
-      break;
-    }
     case "sub":
       sim?.substitute(msg.side, msg.starterIdx, msg.benchIdx);
       if (sim) post({ type: "state", state: sim.getState() });

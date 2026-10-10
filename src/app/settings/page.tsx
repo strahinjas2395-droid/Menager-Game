@@ -18,7 +18,6 @@ export default function SettingsPage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const settings: GameSettings = save?.settings ?? {
-    defaultMatchSpeed: 4,
     soundVolume: 0.7,
     musicVolume: 0.4,
     vibration: true,
@@ -68,24 +67,9 @@ export default function SettingsPage() {
       <div className="flex-1 overflow-y-auto px-4 py-4 pb-24">
         <section className="card-panel space-y-4">
           <span className="stat-label">Match</span>
-          <div>
-            <div className="flex justify-between text-xs">
-              <span>Default match speed</span>
-              <span className="font-bold text-gold">{settings.defaultMatchSpeed}x</span>
-            </div>
-            <div className="mt-1.5 flex gap-2">
-              {([1, 2, 4, 8] as const).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => void update({ defaultMatchSpeed: s })}
-                  className={`flex-1 rounded-lg py-1.5 text-xs font-bold ${
-                    settings.defaultMatchSpeed === s ? "bg-gold text-navy" : "border border-white/10 bg-navy text-white/60"
-                  }`}
-                >
-                  {s}x
-                </button>
-              ))}
-            </div>
+          <div className="flex items-center justify-between rounded-lg bg-navy px-3 py-2 text-xs">
+            <span>Match pace</span>
+            <span className="font-bold text-gold">Fixed · 8 min per half</span>
           </div>
           <VolumeRow label="Sound volume" value={settings.soundVolume}
             onChange={(v) => void update({ soundVolume: v })} />

@@ -6,9 +6,15 @@ import BottomNav from "@/components/BottomNav";
 import TopBar from "@/components/TopBar";
 import StepDots from "@/components/StepDots";
 import InstructionInterpretationView from "@/components/InstructionInterpretationView";
+import PlayerRoleEditor from "@/components/PlayerRoleEditor";
 import { useGameStore } from "@/store/gameStore";
 import { assignTacticalNumbers, selectBestXI } from "@/engine/matchSimulator";
 import { FORMATION_NAMES } from "@/engine/formations";
+import {
+  playerRoleDefinition,
+  resolvePlayerRoleAssignment,
+  retainCompatiblePlayerRoleAssignments,
+} from "@/engine/playerRoles";
 import {
   buildInstructionRoster,
   instructionContextFingerprint,
@@ -17,8 +23,8 @@ import {
 import { interpretTacticalInstructions, type TacticalInstructionRequest } from "@/services/tacticalInterpreter";
 import {
   DefensiveLine, MentalityLevel, PlayStyle, PressingIntensity, TempoSetting,
-  TimeWasting, WidthSetting, type Player, type TacticalInstructionCache,
-  type TacticalSetup,
+  TimeWasting, WidthSetting, type Player, type PlayerRoleAssignment,
+  type TacticalInstructionCache, type TacticalSetup,
 } from "@/types";
 
 const PLAY_STYLES = Object.values(PlayStyle);
@@ -90,6 +96,7 @@ export default function TacticsPage() {
           team: save.tacticalSetup.instructionCache?.team,
           players: { ...(save.tacticalSetup.instructionCache?.players ?? {}) },
         },
+        playerRoles: { ...(save.tacticalSetup.playerRoles ?? {}) },
         setPieces: { ...save.tacticalSetup.setPieces },
         positionOverrides: { ...save.tacticalSetup.positionOverrides },
       });
@@ -134,8 +141,15 @@ export default function TacticsPage() {
   );
   const tacticalNumbers = useMemo(() => assignTacticalNumbers(xi?.roles ?? []), [xi]);
   const instructionRoster = useMemo(
-    () => xi ? buildInstructionRoster(squad, xi.starters, xi.roles, tacticalNumbers) : [],
-    [squad, xi, tacticalNumbers],
+    () => xi ? buildInstructionRoster(
+      squad,
+      xi.starters,
+      xi.roles,
+      tacticalNumbers,
+      draft?.playerRoles,
+      draft?.playStyle,
+    ) : [],
+    [squad, xi, tacticalNumbers, draft?.playerRoles, draft?.playStyle],
   );
   const instructionFingerprint = useMemo(
     () => instructionContextFingerprint(instructionRoster),
@@ -316,6 +330,15 @@ export default function TacticsPage() {
   const pressFrom = 240 + lineShift;
   const pressTo = pressFrom + PRESS_REACH[Number(draft.pressing)];
   const selectedPlayer = squad.find((p) => p.id === selectedPlayerId) ?? squad[0];
+  const selectedXIIndex = selectedPlayer ? xi.starters.findIndex((player) => player.id === selectedPlayer.id) : -1;
+  const selectedSlotRole = selectedXIIndex >= 0 ? xi.roles[selectedXIIndex] : undefined;
+  const selectedRoleAssignment = selectedPlayer && selectedSlotRole
+    ? resolvePlayerRoleAssignment(
+        draft.playerRoles?.[selectedPlayer.id],
+        selectedSlotRole,
+        draft.playStyle,
+      )
+    : undefined;
   const selectedText = selectedPlayer ? instructionDraft[selectedPlayer.id] ?? "" : "";
   const selectedCached = selectedPlayer ? draft.instructionCache?.players[selectedPlayer.id] : undefined;
   const selectedInterpretation = selectedPlayer && isInterpretationCurrent(
@@ -439,6 +462,12 @@ export default function TacticsPage() {
                 const dragPos = draft.positionOverrides[p.id];
                 const isGK = p.primaryPosition === "GK";
                 const number = tacticalNumbers[i] ?? p.shirtNumber;
+                const roleAssignment = resolvePlayerRoleAssignment(
+                  draft.playerRoles?.[p.id],
+                  xi.roles[i],
+                  draft.playStyle,
+                );
+                const roleDefinition = playerRoleDefinition(roleAssignment.role);
                 return (
                   <div
                     key={p.id}
@@ -448,7 +477,7 @@ export default function TacticsPage() {
                       left: `${Math.min(94, Math.max(6, (pos.y / 650) * 100))}%`,
                       top: `${Math.min(97.4, Math.max(2.6, tacticsPitchTop(pos.x)))}%`,
                     }}
-                    title={`${p.firstName} ${p.lastName} · #${number} ${xi.roles[i]} · tap for stats, drag to move`}
+                    title={`${p.firstName} ${p.lastName} · #${number} ${xi.roles[i]} · ${roleDefinition.label} (${roleAssignment.duty}) · tap for stats, drag to move`}
                   >
                     <span
                       className={`flex h-4 w-4 items-center justify-center rounded-full border text-[7px] font-black shadow-md sm:h-5 sm:w-5 sm:text-[8px] ${
@@ -463,6 +492,9 @@ export default function TacticsPage() {
                     </span>
                     <span className="mt-0.5 hidden max-w-14 truncate text-center text-[7px] font-semibold text-white/90 drop-shadow sm:block">
                       {p.lastName}
+                    </span>
+                    <span className="hidden rounded bg-black/45 px-1 text-[6px] font-bold text-gold/90 sm:block">
+                      {roleDefinition.shortLabel}-{roleAssignment.duty[0]}
                     </span>
                   </div>
                 );
@@ -481,8 +513,24 @@ export default function TacticsPage() {
             <select
               value={draft.formation}
               onChange={(e) => {
-                set("formation", e.target.value);
-                setDraft((d) => (d ? { ...d, positionOverrides: {} } : d));
+                const formation = e.target.value;
+                setDraft((d) => {
+                  if (!d) return d;
+                  const nextXI = selectBestXI(squad, formation);
+                  return {
+                    ...d,
+                    formation,
+                    playerRoles: retainCompatiblePlayerRoleAssignments(
+                      d.playerRoles,
+                      nextXI.starters.map((player, index) => ({
+                        playerId: player.id,
+                        position: nextXI.roles[index],
+                      })),
+                      d.playStyle,
+                    ),
+                    positionOverrides: {},
+                  };
+                });
               }}
               className="rounded-lg border border-white/15 bg-card px-3 py-1.5 text-sm font-semibold outline-none focus:border-gold"
             >
@@ -634,6 +682,23 @@ export default function TacticsPage() {
               ))}
             </select>
 
+            {selectedPlayer && selectedSlotRole && selectedRoleAssignment ? (
+              <div className="mt-2">
+                <PlayerRoleEditor
+                  position={selectedSlotRole}
+                  assignment={selectedRoleAssignment}
+                  onChange={(assignment) => setDraft((current) => current ? {
+                    ...current,
+                    playerRoles: { ...(current.playerRoles ?? {}), [selectedPlayer.id]: assignment },
+                  } : current)}
+                />
+              </div>
+            ) : (
+              <p className="mt-2 rounded-lg border border-white/10 bg-navy p-2.5 text-[10px] leading-relaxed text-white/40">
+                Role and duty are assigned to the active XI. Move this player into the formation to configure their match job.
+              </p>
+            )}
+
             <textarea
               value={selectedText}
               onChange={(e) => selectedPlayer && setInstructionDraft((d) => ({ ...d, [selectedPlayer.id]: e.target.value }))}
@@ -691,6 +756,11 @@ export default function TacticsPage() {
         <PlayerStatsPopup
           player={playerCard}
           role={xi.roles[playerCardIdx] ?? playerCard.primaryPosition}
+          roleAssignment={resolvePlayerRoleAssignment(
+            draft.playerRoles?.[playerCard.id],
+            xi.roles[playerCardIdx] ?? playerCard.primaryPosition,
+            draft.playStyle,
+          )}
           number={tacticalNumbers[playerCardIdx] ?? playerCard.shirtNumber}
           onClose={() => setPlayerCardId(null)}
         />
@@ -716,8 +786,8 @@ export default function TacticsPage() {
 }
 
 function PlayerStatsPopup({
-  player, role, number, onClose,
-}: { player: Player; role: string; number: number; onClose: () => void }) {
+  player, role, roleAssignment, number, onClose,
+}: { player: Player; role: string; roleAssignment: PlayerRoleAssignment; number: number; onClose: () => void }) {
   const groups: { title: string; stats: [string, number][] }[] = [
     {
       title: "Technical",
@@ -753,8 +823,8 @@ function PlayerStatsPopup({
             <span className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-gold bg-card text-lg font-black text-gold">{number}</span>
             <div>
               <h2 className="font-black">{player.firstName} {player.lastName}</h2>
-              <p className="text-[10px] font-semibold text-gold">{role} · {player.primaryPosition}</p>
-              <p className="mt-0.5 text-[9px] text-white/40">{player.age} yrs · {player.height} cm · {player.preferredFoot} foot</p>
+              <p className="text-[10px] font-semibold text-gold">{role} · {playerRoleDefinition(roleAssignment.role).label} ({roleAssignment.duty})</p>
+              <p className="mt-0.5 text-[9px] text-white/40">{player.primaryPosition} · {player.age} yrs · {player.height} cm · {player.preferredFoot} foot</p>
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" aria-label="Close player stats"><X size={18} /></button>

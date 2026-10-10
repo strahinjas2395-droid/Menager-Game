@@ -27,6 +27,7 @@ import {
   type OpponentPlayerPlan,
   type Player,
   type PlayerMatchAnalysis,
+  type PlayerRoleAssignment,
   type TacticalChangeRecord,
   type TacticalSetup,
 } from "@/types";
@@ -45,6 +46,12 @@ import {
 import { getFormation, mirrorFormation } from "@/engine/formations";
 import { mergeDirectives, type PlayerDirectives } from "@/engine/directives";
 import { buildAIOpponentMatchPlan, sanitizeOpponentMatchPlan } from "@/engine/matchPlan";
+import { MATCH_TIME_SCALE } from "@/engine/matchClock";
+import {
+  directivesForPlayerRole,
+  playerRoleLabel,
+  resolvePlayerRoleAssignment,
+} from "@/engine/playerRoles";
 import {
   chooseSpatialTarget,
   hasPlaystyle,
@@ -98,12 +105,9 @@ export interface SimOptions {
   fixtureId?: string;
   /** Career difficulty controls opposition observation, reaction and decision quality. */
   difficulty?: Difficulty;
-  /** match-clock seconds advanced per real second at speed 1 (default 6 => 90' in 15 min) */
-  timeScale?: number;
   /**
-   * world/movement seconds per real second at speed 1 (default 0.5).
-   * Decoupled from the clock: at the default 2x speed the players move at
-   * real-time pace while the clock runs at 12x (90' in ~7.5 min).
+   * World/movement seconds per real second (default 0.5). Decoupling it from
+   * the fixed match clock preserves calibrated action density over each half.
    */
   worldScale?: number;
 }
@@ -134,7 +138,10 @@ interface SimPlayer {
   intent: PlayerIntent;
   nextTouchAt: number;
   lastKnockOnAt: number;
+  /** Formation position such as CB, CM or ST. */
   role: string;
+  /** Explicit football job and duty executed within that position. */
+  roleAssignment: PlayerRoleAssignment;
   /** tactical shirt number (1 keeper, 4/5 centre-backs, 10 creator, etc.) */
   number: number;
   tackleCd: number;
@@ -251,8 +258,6 @@ function passSpeed(flavor: PassFlavor, rng: SeededRNG): number {
     default: return rng.float(15, 21);
   }
 }
-
-const EMPTY_DIRECTIVES: PlayerDirectives = {};
 
 /** Passing personality per play style. */
 interface PassProfile {
@@ -382,6 +387,8 @@ export interface LineupEntry {
   shirtNumber: number;
   name: string;
   position: string;
+  tacticalRole: PlayerRoleAssignment["role"];
+  duty: PlayerRoleAssignment["duty"];
   rating: number;
   goals: number;
   yellow: boolean;
@@ -414,7 +421,6 @@ export class MatchSimulator {
   readonly home: TeamSide;
   readonly away: TeamSide;
   private rng: SeededRNG;
-  private timeScale: number;
   private worldScale: number;
   private worldTime = 0;
 
@@ -423,7 +429,6 @@ export class MatchSimulator {
   homeScore = 0;
   awayScore = 0;
   phase: Phase = "kickoff";
-  speed: 1 | 2 | 4 | 8 = 1;
   isRunning = false;
 
   private homePlayers: SimPlayer[] = [];
@@ -486,7 +491,6 @@ export class MatchSimulator {
     this.home = home;
     this.away = away;
     this.rng = new SeededRNG(options.seed);
-    this.timeScale = options.timeScale ?? 6;
     this.worldScale = options.worldScale ?? 0.5;
     this.difficulty = options.difficulty ?? Difficulty.SemiPro;
     this.coachProfile = getAICoachProfile(this.difficulty);
@@ -547,6 +551,11 @@ export class MatchSimulator {
         brainTx: base.x, brainTy: base.y, brainNextAt: 0, intent: "hold",
         nextTouchAt: 0, lastKnockOnAt: -Infinity,
         role: side.roles[i] ?? "CM",
+        roleAssignment: resolvePlayerRoleAssignment(
+          side.tactics.playerRoles?.[p.id],
+          side.roles[i] ?? "CM",
+          side.tactics.playStyle,
+        ),
         number: side.displayNumbers[i] ?? p.shirtNumber,
         tackleCd: 0, runUntil: 0, energy: 1, rating: 6.5, sentOff: false, yellow: false,
         goals: 0, assists: 0,
@@ -567,6 +576,8 @@ export class MatchSimulator {
         playerName: `${sp.p.firstName} ${sp.p.lastName}`,
         shirtNumber: sp.number,
         position: sp.role,
+        tacticalRole: sp.roleAssignment.role,
+        duty: sp.roleAssignment.duty,
         started,
         minuteOn: started ? 0 : minute,
         minuteOff: minute,
@@ -631,6 +642,8 @@ export class MatchSimulator {
     runtime.data.yellowCards = sp.yellow ? 1 : 0;
     runtime.data.redCards = sp.sentOff ? 1 : 0;
     runtime.data.position = sp.role;
+    runtime.data.tacticalRole = sp.roleAssignment.role;
+    runtime.data.duty = sp.roleAssignment.duty;
     if (runtime.active || deactivate) {
       runtime.data.minuteOff = Math.max(runtime.data.minuteOn, Math.floor(this.gameTime / 60));
       runtime.data.minutesPlayed = Math.max(1, Math.round(runtime.secondsPlayed / 60));
@@ -736,12 +749,10 @@ export class MatchSimulator {
     const cached = this.mergedDirectiveCache[side].get(sp.p.id);
     if (cached) return cached;
     const team = this.team(side);
+    const roleDirectives = directivesForPlayerRole(sp.roleAssignment, sp.role);
+    const teamPlan = mergeDirectives(roleDirectives, team.teamDirectives);
     const individual = team.directives?.[sp.p.id];
-    const directives = !team.teamDirectives
-      ? individual ?? EMPTY_DIRECTIVES
-      : !individual
-        ? team.teamDirectives
-        : mergeDirectives(team.teamDirectives, individual);
+    const directives = individual ? mergeDirectives(teamPlan, individual) : teamPlan;
     this.mergedDirectiveCache[side].set(sp.p.id, directives);
     return directives;
   }
@@ -765,7 +776,11 @@ export class MatchSimulator {
     for (const [key, label] of labels) {
       if (before[key] !== tactics[key]) changed.push(`${label}: ${String(before[key])} → ${String(tactics[key])}`);
     }
-    team.tactics = { ...tactics, positionOverrides: { ...tactics.positionOverrides } };
+    team.tactics = {
+      ...tactics,
+      playerRoles: { ...(tactics.playerRoles ?? {}) },
+      positionOverrides: { ...tactics.positionOverrides },
+    };
     const formation = getFormation(tactics.formation);
     const slots = side === "home" ? formation.positions : mirrorFormation(formation).positions;
     const players = this.players(side);
@@ -776,6 +791,7 @@ export class MatchSimulator {
     // centre-back at striker merely because both occupied index 3.
     const freePlayers = new Set(players.map((_, i) => i));
     const slotForPlayer = new Map<number, (typeof slots)[number]>();
+    const roleChanges: string[] = [];
     const orderedSlots = [...slots].sort((a, b) => (a.role === "GK" ? -1 : b.role === "GK" ? 1 : 0));
     for (const slot of orderedSlots) {
       let bestIdx = -1;
@@ -792,7 +808,19 @@ export class MatchSimulator {
     players.forEach((sp, i) => {
       const slot = slotForPlayer.get(i) ?? slots[i];
       if (!slot) return;
+      const previousAssignment = sp.roleAssignment;
       sp.role = slot.role;
+      sp.roleAssignment = resolvePlayerRoleAssignment(
+        tactics.playerRoles?.[sp.p.id],
+        slot.role,
+        tactics.playStyle,
+      );
+      if (
+        previousAssignment.role !== sp.roleAssignment.role ||
+        previousAssignment.duty !== sp.roleAssignment.duty
+      ) {
+        roleChanges.push(`${sp.p.lastName}: ${playerRoleLabel(sp.roleAssignment)}`);
+      }
       const override = tactics.positionOverrides[sp.p.id];
       const base = override
         ? { x: side === "home" ? override.x : PITCH_W - override.x, y: override.y }
@@ -800,8 +828,17 @@ export class MatchSimulator {
       team.roles[i] = slot.role;
       team.basePositions[i] = base;
       const tracked = this.playerTelemetry(sp.p.id);
-      if (tracked) tracked.data.position = slot.role;
+      if (tracked) {
+        tracked.data.position = slot.role;
+        tracked.data.tacticalRole = sp.roleAssignment.role;
+        tracked.data.duty = sp.roleAssignment.duty;
+      }
     });
+    if (roleChanges.length > 0) {
+      changed.push(...roleChanges.slice(0, 4));
+      if (roleChanges.length > 4) changed.push(`+${roleChanges.length - 4} more role changes`);
+    }
+    this.mergedDirectiveCache[side].clear();
     // Keep match numbers stable after kickoff so the manager can always track
     // the same player, even if their role changes with a formation switch.
     if (changed.length > 0) {
@@ -923,19 +960,15 @@ export class MatchSimulator {
     this.isRunning = true;
   }
 
-  setSpeed(multiplier: 1 | 2 | 4 | 8): void {
-    this.speed = multiplier;
-  }
-
   /** Advance one simulation step. dtReal in seconds (typically 0.1). */
   tick(dtReal: number): void {
     if (!this.isRunning || this.finished) return;
     if (this.phase === "halftime" || this.phase === "fulltime") return;
 
-    // Two clocks: the match clock races ahead while the world (movement,
-    // passes, decisions) advances at a real-time-ish pace.
-    const dtClock = dtReal * this.speed * this.timeScale;
-    const dtWorld = dtReal * this.speed * this.worldScale;
+    // Match pace is fixed: regulation advances at eight real minutes per half.
+    // The independent world clock preserves realistic movement/action density.
+    const dtClock = dtReal * MATCH_TIME_SCALE;
+    const dtWorld = dtReal * this.worldScale;
     this.gameTime += dtClock;
     this.worldTime += dtWorld;
     this.tickTelemetry(dtClock);
@@ -1073,7 +1106,9 @@ export class MatchSimulator {
       playerId: sp.p.id,
       shirtNumber: sp.number,
       name: `${sp.p.firstName} ${sp.p.lastName}`,
-      position: sp.p.primaryPosition,
+      position: sp.role,
+      tacticalRole: sp.roleAssignment.role,
+      duty: sp.roleAssignment.duty,
       rating: Number(sp.rating.toFixed(1)),
       goals: sp.goals,
       yellow: sp.yellow,
@@ -1118,6 +1153,13 @@ export class MatchSimulator {
     this.substitutedOut.add(outgoingId);
     this.syncTelemetry(target, true);
     target.p = benchPlayer;
+    target.roleAssignment = resolvePlayerRoleAssignment(
+      team.tactics.playerRoles?.[benchPlayer.id],
+      target.role,
+      team.tactics.playStyle,
+    );
+    this.mergedDirectiveCache[side].delete(outgoingId);
+    this.mergedDirectiveCache[side].delete(benchPlayer.id);
     target.rating = 6.5;
     target.energy = 1;
     target.runUntil = 0;
@@ -1140,7 +1182,10 @@ export class MatchSimulator {
       reason: team.isUserTeam ? "Manager substitution" : "Coach reacted with fresh legs",
       formationBefore: team.tactics.formation,
       formationAfter: team.tactics.formation,
-      changes: [`${this.telemetry.get(outgoingId)?.data.playerName ?? "Player"} off`, `${benchPlayer.firstName} ${benchPlayer.lastName} on`],
+      changes: [
+        `${this.telemetry.get(outgoingId)?.data.playerName ?? "Player"} off`,
+        `${benchPlayer.firstName} ${benchPlayer.lastName} on as ${playerRoleLabel(target.roleAssignment)}`,
+      ],
       playerOffId: outgoingId,
       playerOnId: benchPlayer.id,
     });
@@ -1548,11 +1593,14 @@ export class MatchSimulator {
         // retreats in a low block.
         if (sp.role === "GK") {
           const distToOwn = Math.abs(this.ball.x - this.ownGoalX(side));
+          const sweeperKeeper = sp.roleAssignment.role === "SweeperKeeper";
+          const dutySweep = sp.roleAssignment.duty === "Attack" ? 40 : sp.roleAssignment.duty === "Support" ? 24 : 10;
+          const roleSweep = sweeperKeeper && !park ? dutySweep : 0;
           const sweep = park ? 0 : (line + (hasBall ? 1 : 0)) * 6;
-          const goalOffset = clamp(42 + Math.min(distToOwn, 350) * 0.035 + sweep, 40, 90);
+          const goalOffset = clamp(42 + Math.min(distToOwn, 350) * 0.035 + sweep + roleSweep, 40, 135);
           sp.tx = side === "home" ? goalOffset : PITCH_W - goalOffset;
-          sp.ty = clamp(325 + (this.ball.y - 325) * 0.27, 238, 412);
-          this.movePlayer(sp, dt, 0.34);
+          sp.ty = clamp(325 + (this.ball.y - 325) * (sweeperKeeper ? 0.36 : 0.27), 218, 432);
+          this.movePlayer(sp, dt, sweeperKeeper ? 0.46 : 0.34);
           return;
         }
 
@@ -1661,6 +1709,37 @@ export class MatchSimulator {
           }
         }
 
+        // Duties alter physical depth; roles then add recognisable movement
+        // patterns. They never modify attributes or guarantee an outcome.
+        if (sp.roleAssignment.duty === "Attack") tx += dir * (hasBall ? 46 : 18);
+        else if (sp.roleAssignment.duty === "Defend") tx -= dir * (hasBall ? 22 : 34);
+
+        const tacticalRole = sp.roleAssignment.role;
+        if (tacticalRole === "Mezzala") {
+          const halfSpaceY = base.y < 325 ? 205 : 445;
+          ty = ty * 0.48 + halfSpaceY * 0.52;
+          if (hasBall) tx += dir * (sp.roleAssignment.duty === "Attack" ? 42 : 20);
+        } else if (tacticalRole === "AdvancedPlaymaker") {
+          ty += (325 - ty) * 0.28;
+          tx += dir * (hasBall ? 18 : 6);
+        } else if (tacticalRole === "ShadowStriker") {
+          tx += dir * (hasBall ? 82 : 48);
+          ty += (325 - ty) * 0.5;
+        } else if (tacticalRole === "FalseNine") {
+          tx -= dir * (hasBall ? 92 : 58);
+          ty += (325 - ty) * 0.28;
+        } else if (tacticalRole === "DeepLyingForward") {
+          tx -= dir * (hasBall ? 60 : 35);
+        } else if (tacticalRole === "TargetForward") {
+          tx -= dir * (hasBall ? 34 : 16);
+          ty += (325 - ty) * 0.22;
+        } else if (tacticalRole === "Poacher") {
+          tx += dir * (hasBall ? 62 : 38);
+          ty += (325 - ty) * 0.62;
+        } else if (tacticalRole === "CompleteForward") {
+          ty += Math.sin(this.worldTime * 0.42 + i) * 34;
+        }
+
         // Hold-position is deliberately strong: keep the player's formation
         // anchor, only sliding with the ball as a connected block.
         if (directive.holdPosition) {
@@ -1683,6 +1762,27 @@ export class MatchSimulator {
               ty = ty * 0.3 + mark.y * 0.7;
             }
           }
+        }
+
+        // Position-specific defensive/build-up geometry remains visible even
+        // when a generic hold instruction is also active.
+        if (tacticalRole === "CoverDefender" && !hasBall) {
+          tx -= dir * 38;
+        } else if (tacticalRole === "Stopper" && !hasBall) {
+          tx += dir * 32;
+        } else if (tacticalRole === "WideCentreBack") {
+          const outside = base.y < 325 ? -1 : 1;
+          ty += outside * (sp.roleAssignment.duty === "Attack" ? 68 : 42);
+          if (hasBall && sp.roleAssignment.duty !== "Defend") tx += dir * 35;
+        } else if (tacticalRole === "InvertedFullBack") {
+          ty += (325 - ty) * 0.64;
+          tx += dir * (hasBall ? 32 : 10);
+        } else if (tacticalRole === "HalfBack") {
+          tx = this.ownGoalX(side) + dir * (hasBall ? 255 : 295);
+          ty += (325 - ty) * 0.55;
+        } else if (tacticalRole === "Anchor") {
+          tx = this.ownGoalX(side) + dir * (hasBall ? 335 : 305);
+          ty += (325 - ty) * 0.42;
         }
 
         // A named marking job is a physical approach angle, not a hidden
@@ -2095,6 +2195,9 @@ export class MatchSimulator {
     }
     if (hasPlaystyle(sp.p, PlaystyleTag.ClinicalFinisher) && distToGoal < 18) shootUrge *= 1.35;
     if (hasPlaystyle(sp.p, PlaystyleTag.Poacher) && distToGoal < 17) shootUrge *= 1.22;
+    if (sp.roleAssignment.role === "Poacher" && distToGoal < 18) shootUrge *= 1.35;
+    if (sp.roleAssignment.role === "ShadowStriker" && distToGoal < 23) shootUrge *= 1.22;
+    if (sp.roleAssignment.role === "AdvancedPlaymaker" && sp.roleAssignment.duty === "Support") shootUrge *= 0.62;
     if (directive.avoidShooting) shootUrge = 0.001;
     else if (directive.defensiveDuty) shootUrge *= 0.28;
 
@@ -4284,6 +4387,7 @@ export class MatchSimulator {
     const current = team.tactics;
     const next: TacticalSetup = {
       ...current,
+      playerRoles: { ...(current.playerRoles ?? {}) },
       positionOverrides: { ...current.positionOverrides },
       setPieces: { ...current.setPieces },
     };
@@ -4308,7 +4412,11 @@ export class MatchSimulator {
     // score calls for it. Elite coaches use shot/possession trends before the
     // score changes and make smaller, earlier corrections.
     const acts = chasing || protecting || stalemate || beingOutplayed;
-    if (acts && this.rng.chance(clamp(0.35 + effectiveQuality * 0.64, 0.35, 0.99))) {
+    // Even a poor coach must eventually react to the scoreboard. Difficulty
+    // controls how early and accurately that happens, not whether a coach can
+    // remain entirely passive through the closing minutes.
+    const mustActLate = minute >= 82 && (chasing || protecting || stalemate);
+    if (acts && (mustActLate || this.rng.chance(clamp(0.35 + effectiveQuality * 0.64, 0.35, 0.99)))) {
       if (chasing) {
         const desperate = minute >= 78 || diff <= -2;
         next.mentality = desperate ? MentalityLevel.UltraAttacking : MentalityLevel.Attacking;

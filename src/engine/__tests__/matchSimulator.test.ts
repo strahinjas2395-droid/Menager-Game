@@ -21,6 +21,7 @@ import {
   TimeWasting,
   WidthSetting,
   type Player,
+  type PlayerRoleAssignment,
   type TacticalSetup,
 } from "@/types";
 
@@ -99,6 +100,7 @@ interface SimulatorTestPlayer {
   brainTy: number;
   brainNextAt: number;
   role: string;
+  roleAssignment: PlayerRoleAssignment;
   intent: string;
   runUntil: number;
   sentOff: boolean;
@@ -149,6 +151,16 @@ describe("selectBestXI", () => {
 });
 
 describe("MatchSimulator", () => {
+  it("reaches half time after eight minutes of unaccelerated real time", () => {
+    const { sim } = setup(4241);
+    for (let tick = 0; tick < 4799; tick++) sim.tick(0.1);
+    expect(sim.getState().phase).not.toBe("halftime");
+    expect(sim.getState().gameTime).toBeCloseTo(2699.4375, 3);
+    sim.tick(0.1);
+    expect(sim.getState().phase).toBe("halftime");
+    expect(sim.getState().gameTime).toBe(2700);
+  });
+
   it("simulates a full match with valid outputs", () => {
     const { sim } = setup(4242);
     sim.start();
@@ -273,6 +285,83 @@ describe("MatchSimulator", () => {
     internal.movePlayer(fast, 0.05, 1);
     // Momentum has to be braked before the player can reverse direction.
     expect(fast.x).toBeGreaterThan(beforeTurn);
+  });
+
+  it("turns explicit role and duty choices into measurably different physical movement", () => {
+    const runFullBack = (assignment: PlayerRoleAssignment) => {
+      const built = setup(6011);
+      built.home.isUserTeam = true;
+      const fullBackIndex = Math.max(0, built.home.roles.findIndex((role) => role === "RB" || role === "LB"));
+      const playerId = built.home.starters[fullBackIndex].id;
+      built.home.tactics.playerRoles = { [playerId]: assignment };
+      const sim = new MatchSimulator(built.home, built.away, { seed: 6011 });
+      const internal = simulatorHarness(sim);
+      const carrierIndex = Math.max(0, built.home.roles.findIndex((role) => role === "CM" || role === "CDM"));
+      internal.awayPlayers.forEach((player, index) => {
+        player.x = 820;
+        player.y = 40 + index * 52;
+      });
+      sim.phase = "open";
+      internal.giveBallTo("home", carrierIndex);
+      internal.decisionCd = 5;
+      sim.tick(0.1);
+      return {
+        targetX: internal.homePlayers[fullBackIndex].tx,
+        targetY: internal.homePlayers[fullBackIndex].ty,
+        lineup: sim.getState().homeLineup[fullBackIndex],
+      };
+    };
+
+    const defender = runFullBack({ role: "FullBack", duty: "Defend" });
+    const attacker = runFullBack({ role: "WingBack", duty: "Attack" });
+    expect(attacker.targetX).toBeGreaterThan(defender.targetX + 70);
+    expect(Math.abs(attacker.targetY - 325)).toBeGreaterThan(Math.abs(defender.targetY - 325));
+    expect(defender.lineup).toMatchObject({ tacticalRole: "FullBack", duty: "Defend" });
+    expect(attacker.lineup).toMatchObject({ tacticalRole: "WingBack", duty: "Attack" });
+  });
+
+  it("applies live role changes immediately and retains the job in analysis", () => {
+    const built = setup(6012);
+    built.home.isUserTeam = true;
+    const midfielderIndex = Math.max(0, built.home.roles.findIndex((role) => role === "CM"));
+    const midfielder = built.home.starters[midfielderIndex];
+    const sim = new MatchSimulator(built.home, built.away, { seed: 6012 });
+    sim.updateTactics("home", {
+      ...built.home.tactics,
+      playerRoles: {
+        ...(built.home.tactics.playerRoles ?? {}),
+        [midfielder.id]: { role: "Mezzala", duty: "Attack" },
+      },
+    });
+
+    expect(sim.getState().homeLineup[midfielderIndex]).toMatchObject({
+      playerId: midfielder.id,
+      tacticalRole: "Mezzala",
+      duty: "Attack",
+    });
+    expect(sim.getAnalysis().players[midfielder.id]).toMatchObject({
+      tacticalRole: "Mezzala",
+      duty: "Attack",
+    });
+    expect(sim.getAnalysis().tacticalChanges.at(-1)?.changes.some((change) => change.includes("Mezzala"))).toBe(true);
+  });
+
+  it("gives a substitute their validated configured role in the inherited formation position", () => {
+    const built = setup(6013);
+    built.home.isUserTeam = true;
+    const strikerIndex = Math.max(0, built.home.roles.findIndex((role) => role === "ST"));
+    const substitute = built.home.bench[0];
+    built.home.tactics.playerRoles = {
+      [substitute.id]: { role: "TargetForward", duty: "Support" },
+    };
+    const sim = new MatchSimulator(built.home, built.away, { seed: 6013 });
+    expect(sim.substitute("home", strikerIndex, 0)).toBe(true);
+    expect(sim.getState().homeLineup[strikerIndex]).toMatchObject({
+      playerId: substitute.id,
+      position: "ST",
+      tacticalRole: "TargetForward",
+      duty: "Support",
+    });
   });
 
   it("renders controlled possession as repeated touches with ball-player separation", () => {

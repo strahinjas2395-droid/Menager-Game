@@ -7,12 +7,17 @@
  * exposes cached plans to the simulator, and keeps the old small phrase parser
  * only so a match remains playable while the AI service is offline.
  */
-import type {
-  Player,
-  TacticalDirectives,
-  TacticalInstructionCache,
-  TacticalInstructionInterpretation,
+import {
+  PlayStyle,
+  type Player,
+  type PlayerDuty,
+  type PlayerRoleAssignment,
+  type TacticalDirectives,
+  type TacticalInstructionCache,
+  type TacticalInstructionInterpretation,
+  type TacticalPlayerRole,
 } from "@/types";
+import { resolvePlayerRoleAssignment } from "@/engine/playerRoles";
 
 export type PlayerDirectives = TacticalDirectives;
 
@@ -25,6 +30,8 @@ export interface InstructionRosterPlayer {
   tacticalNumber?: number;
   position: string;
   role?: string;
+  tacticalRole?: TacticalPlayerRole;
+  duty?: PlayerDuty;
 }
 
 const BOOL_KEYS = [
@@ -57,11 +64,17 @@ export function buildInstructionRoster(
   starters: Player[] = [],
   roles: string[] = [],
   tacticalNumbers: number[] = [],
+  assignments: Record<string, PlayerRoleAssignment> | undefined = {},
+  style: PlayStyle = PlayStyle.Balanced,
 ): InstructionRosterPlayer[] {
-  const lineup = new Map(starters.map((player, i) => [
-    player.id,
-    { role: roles[i], tacticalNumber: tacticalNumbers[i] },
-  ]));
+  const lineup = new Map(starters.map((player, i) => {
+    const position = roles[i] ?? player.primaryPosition;
+    const assignment = resolvePlayerRoleAssignment(assignments[player.id], position, style);
+    return [
+      player.id,
+      { role: position, tacticalNumber: tacticalNumbers[i], tacticalRole: assignment.role, duty: assignment.duty },
+    ];
+  }));
   return squad.map((player) => {
     const slot = lineup.get(player.id);
     return {
@@ -73,6 +86,8 @@ export function buildInstructionRoster(
       tacticalNumber: slot?.tacticalNumber,
       position: player.primaryPosition,
       role: slot?.role,
+      tacticalRole: slot?.tacticalRole,
+      duty: slot?.duty,
     };
   });
 }
@@ -84,7 +99,7 @@ export function buildInstructionRoster(
 export function instructionContextFingerprint(roster: InstructionRosterPlayer[]): string {
   const source = [...roster]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map((p) => `${p.id}:${p.squadNumber}:${p.tacticalNumber ?? "-"}:${p.role ?? "-"}`)
+    .map((p) => `${p.id}:${p.squadNumber}:${p.tacticalNumber ?? "-"}:${p.role ?? "-"}:${p.tacticalRole ?? "-"}:${p.duty ?? "-"}`)
     .join("|");
   let hash = 0x811c9dc5;
   for (let i = 0; i < source.length; i++) {

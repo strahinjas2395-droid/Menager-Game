@@ -16,6 +16,8 @@ const roster: InstructionRosterPlayer[] = [
     tacticalNumber: 3,
     position: "LB",
     role: "LB",
+    tacticalRole: "WingBack",
+    duty: "Attack",
   },
   {
     id: "striker-15",
@@ -26,6 +28,8 @@ const roster: InstructionRosterPlayer[] = [
     tacticalNumber: 9,
     position: "ST",
     role: "ST",
+    tacticalRole: "TargetForward",
+    duty: "Support",
   },
 ];
 
@@ -75,6 +79,8 @@ describe("hosted tactical language intelligence", () => {
     expect(sentPrompt).toContain('"squadNumber":15');
     expect(sentPrompt).toContain('"tacticalNumber":9');
     expect(sentPrompt).toContain('"role":"ST"');
+    expect(sentPrompt).toContain('"tacticalRole":"TargetForward"');
+    expect(sentPrompt).toContain('"duty":"Support"');
     expect(result.warning).toBeUndefined();
     expect(result.interpretations.lb.source).toBe("ai");
     expect(result.interpretations.lb.directives).toMatchObject({

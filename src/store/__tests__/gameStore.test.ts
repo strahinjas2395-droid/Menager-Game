@@ -122,17 +122,25 @@ describe("core game loop (integration)", () => {
     // team-wide behavior and a resolved player assignment.
     const fullSquad = store().save!.world.clubs[clubId].playerIds
       .map((id) => store().save!.world.players[id]);
+    const structuredRoles = {
+      [starterId]: { role: "SweeperKeeper" as const, duty: "Support" as const },
+    };
     const roster = buildInstructionRoster(
       fullSquad,
       instructedSide.starters,
       instructedSide.roles,
       instructedSide.displayNumbers,
+      structuredRoles,
     );
     const contextFingerprint = instructionContextFingerprint(roster);
     const targetId = instructedSide.starters.find((player) => player.id !== starterId)!.id;
     const teamText = "evryone boot itt away rite now; our one shud fynd the other lad";
     await store().updateTactics({
       ...store().save!.tacticalSetup,
+      playerRoles: {
+        ...(store().save!.tacticalSetup.playerRoles ?? {}),
+        ...structuredRoles,
+      },
       teamInstructions: teamText,
       instructionCache: {
         players: {},
@@ -167,6 +175,10 @@ describe("core game loop (integration)", () => {
       preferredTargetId: targetId,
       targetPriority: 1,
       targetDelivery: "aerial",
+    });
+    expect(semanticSide.tactics.playerRoles?.[starterId]).toEqual({
+      role: "SweeperKeeper",
+      duty: "Support",
     });
 
     // Exact opponent plans are validated, keyed by fixture and compiled into
@@ -208,6 +220,14 @@ describe("core game loop (integration)", () => {
       ? getMatchContext(store().save!, week1UserFixture.id)!.home
       : getMatchContext(store().save!, week1UserFixture.id)!.away).opponentPlan).toBeUndefined();
     store().save!.opponentPlans = currentPlans;
+
+    const currentPlayerRoles = store().save!.tacticalSetup.playerRoles;
+    delete store().save!.tacticalSetup.playerRoles;
+    const legacyRoleContext = getMatchContext(store().save!, week1UserFixture.id)!;
+    expect(legacyRoleContext.home.isUserTeam
+      ? legacyRoleContext.home.tactics.playerRoles
+      : legacyRoleContext.away.tactics.playerRoles).toBeUndefined();
+    store().save!.tacticalSetup.playerRoles = currentPlayerRoles;
 
     const buildResult = (fixtureId: string): MatchResult => {
       const s = store().save!;
