@@ -111,11 +111,94 @@ export function simulateWeekAI(
   for (const f of fixturesForWeek(fixtures, week)) {
     if (f.played) continue;
     if (f.homeClubId === userClubId || f.awayClubId === userClubId) continue;
-    const res = simulateQuickMatch(squadOf(f.homeClubId), squadOf(f.awayClubId), rng);
+    const homeSquad = squadOf(f.homeClubId);
+    const awaySquad = squadOf(f.awayClubId);
+    const res = simulateQuickMatch(homeSquad, awaySquad, rng);
     f.homeGoals = res.homeGoals;
     f.awayGoals = res.awayGoals;
     f.played = true;
+    applyQuickMatchPlayerStats(homeSquad, res.homeGoals, res.awayGoals, rng);
+    applyQuickMatchPlayerStats(awaySquad, res.awayGoals, res.homeGoals, rng);
   }
+}
+
+/**
+ * Keep AI-player form and output meaningful without running the full spatial
+ * simulator for thousands of background fixtures. Nothing resembling an
+ * overall rating is persisted: role-relevant attributes only weight selection
+ * and event attribution for this one result.
+ */
+export function applyQuickMatchPlayerStats(
+  squad: Player[],
+  goalsFor: number,
+  goalsAgainst: number,
+  rng: SeededRNG,
+): void {
+  if (squad.length === 0) return;
+  const keepers = squad
+    .filter((player) => player.primaryPosition === "GK")
+    .sort((a, b) => quickRoleScore(b) - quickRoleScore(a));
+  const outfield = squad
+    .filter((player) => player.primaryPosition !== "GK")
+    .sort((a, b) => quickRoleScore(b) - quickRoleScore(a));
+  const lineup = [...(keepers[0] ? [keepers[0]] : []), ...outfield.slice(0, keepers[0] ? 10 : 11)];
+  if (lineup.length === 0) return;
+
+  const goalBonus = new Map<string, number>();
+  const assistBonus = new Map<string, number>();
+  for (let goal = 0; goal < goalsFor; goal++) {
+    const scorer = rng.weighted(lineup.map((player) => [player, scoringWeight(player)] as [Player, number]));
+    scorer.seasonStats.goals += 1;
+    goalBonus.set(scorer.id, (goalBonus.get(scorer.id) ?? 0) + 0.58);
+    const creators = lineup.filter((player) => player.id !== scorer.id);
+    if (creators.length > 0 && rng.chance(0.76)) {
+      const assister = rng.weighted(creators.map((player) => [player, assistWeight(player)] as [Player, number]));
+      assister.seasonStats.assists += 1;
+      assistBonus.set(assister.id, (assistBonus.get(assister.id) ?? 0) + 0.32);
+    }
+  }
+
+  const yellowCount = rng.chance(0.72) ? rng.int(1, 3) : 0;
+  for (const player of rng.shuffle(lineup).slice(0, yellowCount)) player.seasonStats.yellowCards += 1;
+  if (rng.chance(0.025)) rng.pick(lineup).seasonStats.redCards += 1;
+
+  const resultDelta = goalsFor > goalsAgainst ? 0.3 : goalsFor < goalsAgainst ? -0.24 : 0.04;
+  const defensiveDelta = goalsAgainst === 0 ? 0.16 : Math.max(-0.22, -(goalsAgainst - 1) * 0.08);
+  for (const player of lineup) {
+    player.seasonStats.appearances += 1;
+    const positionDelta = ["GK", "CB", "RB", "LB"].includes(player.primaryPosition) ? defensiveDelta : 0;
+    player.seasonStats.lastRating = Number(clamp(
+      6.45 + resultDelta + positionDelta + (goalBonus.get(player.id) ?? 0) +
+        (assistBonus.get(player.id) ?? 0) + rng.float(-0.38, 0.38),
+      4.5,
+      9.5,
+    ).toFixed(1));
+  }
+}
+
+function quickRoleScore(player: Player): number {
+  if (player.primaryPosition === "GK") {
+    return player.reflexes * 1.4 + player.shotStopping * 1.4 + player.handling + player.communication * 0.5;
+  }
+  if (["CB", "RB", "LB"].includes(player.primaryPosition)) {
+    return player.tackling + player.interceptions + player.positioning + player.pace * 0.55 + player.aerialDuels * 0.45;
+  }
+  if (["ST", "RW", "LW"].includes(player.primaryPosition)) {
+    return player.finishing * 1.15 + player.offTheBall + player.pace * 0.8 + player.dribbling * 0.5;
+  }
+  return player.shortPassing + player.creativity + player.decisions + player.workRate * 0.6 + player.ballControl * 0.5;
+}
+
+function scoringWeight(player: Player): number {
+  if (player.primaryPosition === "GK") return 0.05;
+  const position = ["ST", "RW", "LW"].includes(player.primaryPosition) ? 1.7 :
+    ["CAM", "CM"].includes(player.primaryPosition) ? 0.9 : 0.42;
+  return Math.max(0.2, position * (player.finishing * 1.15 + player.offTheBall + player.heading * 0.45));
+}
+
+function assistWeight(player: Player): number {
+  if (player.primaryPosition === "GK") return 0.2;
+  return Math.max(0.4, player.creativity + player.shortPassing + player.crossing * 0.75 + player.teamwork * 0.35);
 }
 
 export function weekIsComplete(fixtures: Fixture[], week: number): boolean {

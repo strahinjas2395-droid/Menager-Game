@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Pause, Play, FastForward, Gauge, SlidersHorizontal, X, Check, LoaderCircle, Sparkles } from "lucide-react";
+import { BarChart3, Pause, Play, FastForward, Gauge, SlidersHorizontal, X, Check, LoaderCircle, Sparkles } from "lucide-react";
 import MatchCanvas, { type MatchScene } from "@/components/MatchCanvas";
 import StepDots from "@/components/StepDots";
 import InstructionInterpretationView from "@/components/InstructionInterpretationView";
@@ -68,6 +68,7 @@ function MatchScreen() {
   const [snapshot, setSnapshot] = useState<MatchSnapshot | null>(null);
   const [halfTime, setHalfTime] = useState(false);
   const [fullTime, setFullTime] = useState(false);
+  const [finishing, setFinishing] = useState(false);
   const [paused, setPaused] = useState(false);
   const [speed, setSpeed] = useState<1 | 2 | 4 | 8>(
     (save?.settings.defaultMatchSpeed as 1 | 2 | 4 | 8) ?? 2,
@@ -220,7 +221,7 @@ function MatchScreen() {
       payload: {
         home: ctx.home,
         away: ctx.away,
-        options: { seed: ctx.seed, timeScale: 6 },
+        options: { seed: ctx.seed, timeScale: 6, difficulty: save?.difficulty },
       },
     });
     workerRef.current = worker;
@@ -387,8 +388,9 @@ function MatchScreen() {
     }
   };
 
-  const finishMatch = async () => {
-    if (!ctx || !snapshot) return;
+  const finishMatch = async (destination: "continue" | "analysis" = "continue") => {
+    if (!ctx || !snapshot || !save || finishing) return;
+    setFinishing(true);
     const homeGoals = snapshot.homeScore + (etGoals?.h ?? 0);
     const awayGoals = snapshot.awayScore + (etGoals?.a ?? 0);
     const result: MatchResult = {
@@ -401,6 +403,12 @@ function MatchScreen() {
       awayPens: pens?.away,
       stats: snapshot.stats,
       ratings: snapshot.ratings,
+      analysis: snapshot.analysis,
+      seasonYear: save.season.seasonYear,
+      week: ctx.fixture.week,
+      competitionLabel: ctx.competitionLabel,
+      homeClubName: ctx.home.name,
+      awayClubName: ctx.away.name,
       events: [
         ...snapshot.events,
         ...(etGoals
@@ -412,8 +420,10 @@ function MatchScreen() {
       ],
     };
     const res = recordUserMatch(result);
-    if (res.type === "match") {
-      router.replace(`/match?fixture=${res.fixtureId}`);
+    if (destination === "analysis") {
+      router.replace(`/analysis?match=${ctx.fixture.id}`);
+    } else if (res.type === "match") {
+      router.replace(`/opposition?fixture=${res.fixtureId}`);
     } else {
       router.replace("/hub");
     }
@@ -665,12 +675,22 @@ function MatchScreen() {
                   home={snapshot?.homeLineup ?? []}
                   away={snapshot?.awayLineup ?? []}
                 />
-                <button
-                  onClick={() => void finishMatch()}
-                  className="btn-gold mt-3 w-full"
-                >
-                  Continue
-                </button>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => void finishMatch("analysis")}
+                    disabled={finishing || !snapshot?.analysis}
+                    className="btn-dark flex items-center justify-center gap-1.5 text-xs disabled:opacity-40"
+                  >
+                    <BarChart3 size={14} /> Full Analysis
+                  </button>
+                  <button
+                    onClick={() => void finishMatch("continue")}
+                    disabled={finishing}
+                    className="btn-gold w-full disabled:opacity-60"
+                  >
+                    {finishing ? "Saving…" : "Continue"}
+                  </button>
+                </div>
               </div>
             )}
           </div>

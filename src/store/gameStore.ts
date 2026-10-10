@@ -377,24 +377,45 @@ export const useGameStore = create<GameState>((set, get) => {
       fixture.homePens = result.homePens;
       fixture.awayPens = result.awayPens;
       fixture.played = true;
-      save.results[fixture.id] = result;
+      save.results[fixture.id] = {
+        ...result,
+        seasonYear: result.seasonYear ?? save.season.seasonYear,
+        week: result.week ?? fixture.week,
+        competitionLabel: result.competitionLabel ?? competitionLabelFor(fixture, save),
+        homeClubName: result.homeClubName ?? save.world.clubs[fixture.homeClubId]?.name ?? fixture.homeClubId,
+        awayClubName: result.awayClubName ?? save.world.clubs[fixture.awayClubId]?.name ?? fixture.awayClubId,
+      };
 
-      // season stats from ratings + goal events
-      const participants = Object.keys(result.ratings);
-      for (const pid of participants) {
-        const p = save.world.players[pid];
-        if (!p) continue;
-        p.seasonStats.appearances += 1;
-        p.seasonStats.lastRating = result.ratings[pid];
-      }
-      for (const e of result.events) {
-        if (e.type === MatchEventType.Goal || e.type === MatchEventType.PenaltyGoal) {
-          if (e.playerId && save.world.players[e.playerId]) {
-            save.world.players[e.playerId].seasonStats.goals += 1;
-          }
+      // Detailed reports are authoritative for appearances, goals, assists and
+      // discipline. Older saves/results retain the event-based fallback.
+      if (result.analysis) {
+        for (const report of Object.values(result.analysis.players)) {
+          const p = save.world.players[report.playerId];
+          if (!p) continue;
+          p.seasonStats.appearances += 1;
+          p.seasonStats.lastRating = report.rating;
+          p.seasonStats.goals += report.goals;
+          p.seasonStats.assists += report.assists;
+          p.seasonStats.yellowCards += report.yellowCards;
+          p.seasonStats.redCards += report.redCards;
         }
-        if (e.type === MatchEventType.YellowCard && e.playerId && save.world.players[e.playerId]) {
-          save.world.players[e.playerId].seasonStats.yellowCards += 1;
+      } else {
+        const participants = Object.keys(result.ratings);
+        for (const pid of participants) {
+          const p = save.world.players[pid];
+          if (!p) continue;
+          p.seasonStats.appearances += 1;
+          p.seasonStats.lastRating = result.ratings[pid];
+        }
+        for (const e of result.events) {
+          if (e.type === MatchEventType.Goal || e.type === MatchEventType.PenaltyGoal) {
+            if (e.playerId && save.world.players[e.playerId]) {
+              save.world.players[e.playerId].seasonStats.goals += 1;
+            }
+          }
+          if (e.type === MatchEventType.YellowCard && e.playerId && save.world.players[e.playerId]) {
+            save.world.players[e.playerId].seasonStats.yellowCards += 1;
+          }
         }
       }
 
@@ -491,6 +512,16 @@ export const useGameStore = create<GameState>((set, get) => {
   };
 });
 
+function competitionLabelFor(fixture: Fixture, save: GameSave): string {
+  return fixture.competitionType === CompetitionType.League
+    ? save.world.leagues[fixture.competitionId]?.name ?? "League"
+    : fixture.competitionType === CompetitionType.Cup
+      ? `Cup — ${CUP_ROUND_NAMES[fixture.round] ?? "Round"}`
+      : fixture.round > 10
+        ? continentalRoundName(fixture.round - 10)
+        : `Continental — Group ${fixture.group ?? ""}`;
+}
+
 function describeResult(fixture: Fixture, save: GameSave): string {
   const home = save.world.clubs[fixture.homeClubId];
   const away = save.world.clubs[fixture.awayClubId];
@@ -526,22 +557,19 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
     const squad = club.playerIds
       .map((id) => save.world.players[id])
       .filter((p): p is Player => !!p);
-    const tactics = isUser
-      ? save.tacticalSetup
-      : tacticsFromManager(
-          save.world.managers[club.managerId] ?? {
-            id: "",
-            firstName: "AI",
-            lastName: "Manager",
-            nationality: "Bretherland",
-            personality: 0 as never,
-            reputation: 50,
-            clubId,
-            formation: "4-3-3",
-            playStyle: PlayStyle.Balanced,
-            tacticalFlexibility: 8,
-          },
-        );
+    const manager = save.world.managers[club.managerId] ?? {
+      id: "",
+      firstName: "AI",
+      lastName: "Manager",
+      nationality: "Bretherland",
+      personality: 0 as never,
+      reputation: 50,
+      clubId,
+      formation: "4-3-3",
+      playStyle: PlayStyle.Balanced,
+      tacticalFlexibility: 8,
+    };
+    const tactics = isUser ? save.tacticalSetup : tacticsFromManager(manager);
     const side = buildTeamSide({
       clubId,
       name: club.name,
@@ -552,6 +580,12 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
       squad,
       tactics,
       isUserTeam: isUser,
+      manager: {
+        id: manager.id,
+        name: `${manager.firstName} ${manager.lastName}`,
+        tacticalFlexibility: manager.tacticalFlexibility,
+        reputation: manager.reputation,
+      },
     });
 
     if (isUser) {
@@ -579,14 +613,7 @@ export function getMatchContext(save: GameSave, fixtureId: string): MatchContext
     return side;
   };
 
-  const competitionLabel =
-    fixture.competitionType === CompetitionType.League
-      ? save.world.leagues[fixture.competitionId]?.name ?? "League"
-      : fixture.competitionType === CompetitionType.Cup
-        ? `Cup — ${CUP_ROUND_NAMES[fixture.round] ?? "Round"}`
-        : fixture.round > 10
-          ? continentalRoundName(fixture.round - 10)
-          : `Continental — Group ${fixture.group ?? ""}`;
+  const competitionLabel = competitionLabelFor(fixture, save);
 
   return {
     fixture,

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
-  ArrowRight, CalendarDays, ChevronsRight, Inbox, Mail, Shield, Trophy, Users,
+  ArrowRight, BarChart3, CalendarDays, ChevronsRight, Inbox, Mail, ScanSearch, Shield, Trophy, Users,
 } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import TopBar from "@/components/TopBar";
@@ -61,13 +61,17 @@ export default function HubPage() {
     : "-";
 
   const onAdvance = () => {
+    if (weekQueue.length > 0) {
+      router.push(`/opposition?fixture=${weekQueue[0].id}`);
+      return;
+    }
     setAdvancing(true);
     // small delay so the button feedback paints
     setTimeout(() => {
       const res = advanceWeek();
       setAdvancing(false);
       if (res.type === "match") {
-        router.push(`/match?fixture=${res.fixtureId}`);
+        router.push(`/opposition?fixture=${res.fixtureId}`);
       } else if (res.type === "seasonEnd") {
         setToast("Season complete! A new campaign begins.");
         setTimeout(() => setToast(null), 3500);
@@ -170,9 +174,12 @@ export default function HubPage() {
                   color={save.world.clubs[nextMatch.awayClubId]?.primaryColor}
                 />
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <Link href="/squad" className="btn-dark py-2 text-center text-xs">Select Squad</Link>
-                <Link href="/tactics" className="btn-dark py-2 text-center text-xs">Tactics</Link>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <Link href="/squad" className="btn-dark py-2 text-center text-[11px]">Squad</Link>
+                <Link href="/tactics" className="btn-dark py-2 text-center text-[11px]">Tactics</Link>
+                <Link href={`/opposition?fixture=${nextMatch.id}`} className="btn-dark flex items-center justify-center gap-1 py-2 text-center text-[11px] text-gold">
+                  <ScanSearch size={13} /> Scout
+                </Link>
               </div>
             </>
           ) : (
@@ -223,6 +230,12 @@ export default function HubPage() {
             <span className="stat-label">Squad</span>
             <div className="mt-1 text-sm font-bold">{squad.length} players</div>
             <div className="text-[11px] text-white/50">Avg age {avgAge}</div>
+          </Link>
+
+          <Link href="/analysis" className="card-panel block transition hover:border-gold/40">
+            <span className="stat-label flex items-center gap-1.5"><BarChart3 size={13} /> Match Analysis</span>
+            <div className="mt-1 text-sm font-bold text-gold">{Object.keys(save.results ?? {}).length} reports</div>
+            <div className="text-[11px] text-white/50">Matches, players & heatmaps →</div>
           </Link>
 
           <Link href="/transfers" className="card-panel block transition hover:border-gold/40">
@@ -279,7 +292,7 @@ export default function HubPage() {
           disabled={advancing}
           className="btn-gold flex w-full items-center justify-center gap-2 py-3.5"
         >
-          {advancing ? "Simulating…" : "Advance to Match Day"}
+          {advancing ? "Simulating…" : weekQueue.length > 0 ? "Continue Match Day" : "Advance to Match Day"}
           <ChevronsRight size={18} />
         </button>
       </div>

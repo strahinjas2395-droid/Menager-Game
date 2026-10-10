@@ -8,7 +8,7 @@ import {
   generateGroupFixtures,
   selectQualifiedClubs,
 } from "@/engine/continentalEngine";
-import { TOTAL_WEEKS, fixturesForWeek, transferWindowOpen } from "@/engine/seasonManager";
+import { applyQuickMatchPlayerStats, TOTAL_WEEKS, fixturesForWeek, transferWindowOpen } from "@/engine/seasonManager";
 import {
   askingPriceFor,
   completeTransfer,
@@ -136,6 +136,15 @@ describe("seasonManager", () => {
   it("opens transfer windows in weeks 1-4 and 19-22 only", () => {
     for (const w of [1, 2, 3, 4, 19, 20, 21, 22]) expect(transferWindowOpen(w)).toBe(true);
     for (const w of [0, 5, 10, 18, 23, 30, 42]) expect(transferWindowOpen(w)).toBe(false);
+  });
+
+  it("attributes background-match appearances, goals, assists and form to AI players", () => {
+    const squad = generateSquad("form", 2, "Bretherland", new SeededRNG(880), 880);
+    applyQuickMatchPlayerStats(squad, 3, 1, new SeededRNG(99));
+    expect(squad.filter((player) => player.seasonStats.appearances === 1)).toHaveLength(11);
+    expect(squad.reduce((sum, player) => sum + player.seasonStats.goals, 0)).toBe(3);
+    expect(squad.reduce((sum, player) => sum + player.seasonStats.assists, 0)).toBeLessThanOrEqual(3);
+    expect(squad.some((player) => player.seasonStats.lastRating >= 7)).toBe(true);
   });
 
   it("fixturesForWeek filters only that week", () => {

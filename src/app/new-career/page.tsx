@@ -10,11 +10,14 @@ import { useGameStore } from "@/store/gameStore";
 
 type Step = 1 | 2 | 3 | 4;
 
-const DIFFICULTIES: { id: Difficulty; desc: string }[] = [
-  { id: Difficulty.Amateur, desc: "Board is patient. Big budgets. Relaxed expectations." },
-  { id: Difficulty.SemiPro, desc: "Normal budgets and a top-half finish expected." },
-  { id: Difficulty.Professional, desc: "Tight budget, continental qualification expected." },
-  { id: Difficulty.Legend, desc: "Tiny budget, win everything or be sacked. Good luck." },
+const DIFFICULTIES: { id: Difficulty; label: string; desc: string }[] = [
+  { id: Difficulty.Beginner, label: "Beginner", desc: "Opposition coaches react late, read only the score and make basic substitutions." },
+  { id: Difficulty.Amateur, label: "Amateur", desc: "Slow tactical reactions with limited formation changes and squad management." },
+  { id: Difficulty.SemiPro, label: "Semi-Pro", desc: "Balanced match-day coaching with occasional tactical adaptation." },
+  { id: Difficulty.Professional, label: "Professional", desc: "Coaches read match trends, alter systems and target tiring players." },
+  { id: Difficulty.WorldClass, label: "World Class", desc: "Fast, informed reactions using pressure, territory and chance trends." },
+  { id: Difficulty.Legendary, label: "Legendary", desc: "Elite coaches anticipate danger and make precise tactical or personnel changes." },
+  { id: Difficulty.Ultimate, label: "Ultimate", desc: "Near-immediate expert analysis, optimal substitutions and ruthless game management." },
 ];
 
 function Stars({ rep }: { rep: number }) {
@@ -235,7 +238,7 @@ export default function NewCareer() {
                       }`}
                     />
                     <span>
-                      <span className="block text-sm font-bold">{d.id}</span>
+                      <span className="block text-sm font-bold">{d.label}</span>
                       <span className="block text-xs text-white/50">{d.desc}</span>
                     </span>
                   </button>
@@ -252,7 +255,7 @@ export default function NewCareer() {
               <Row label="League" value={`${selectedLeague?.name ?? ""} (${selectedLeague?.nation ?? ""})`} />
               <Row label="Club" value={selectedClubName ?? ""} />
               <Row label="Manager" value={`${managerName.trim()} (${nationality})`} />
-              <Row label="Difficulty" value={difficulty} />
+              <Row label="Difficulty" value={DIFFICULTIES.find((item) => item.id === difficulty)?.label ?? difficulty} />
               <Row label="Season" value="2026 · 42 weeks" />
             </div>
             <p className="mt-4 text-xs leading-relaxed text-white/45">

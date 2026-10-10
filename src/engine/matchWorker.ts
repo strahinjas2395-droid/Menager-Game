@@ -5,14 +5,14 @@
  * Main -> worker: init | start | pause | resume | speed | skip | sub | tactics | directives | resumeHalf
  * Worker -> main: ready | state | event | halfTime | fullTime
  */
-import { MatchSimulator, type MatchSnapshot, type Side, type TeamSide } from "./matchSimulator";
+import { MatchSimulator, type MatchSnapshot, type Side, type SimOptions, type TeamSide } from "./matchSimulator";
 import type { MatchEvent, TacticalSetup } from "../types";
 import type { PlayerDirectives } from "./directives";
 
 interface InitPayload {
   home: TeamSide;
   away: TeamSide;
-  options: { seed: number; timeScale?: number; worldScale?: number };
+  options: SimOptions;
 }
 
 type InMsg =

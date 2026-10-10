@@ -7,6 +7,7 @@ import BottomNav from "@/components/BottomNav";
 import { useGameStore } from "@/store/gameStore";
 import StepDots from "@/components/StepDots";
 import { downloadSave, importDatabase } from "@/database/storage";
+import { difficultyLabel } from "@/utils/difficulty";
 import type { GameSettings } from "@/types";
 
 export default function SettingsPage() {
@@ -157,7 +158,7 @@ export default function SettingsPage() {
         <section className="card-panel mt-3 text-[11px] text-white/45">
           <span className="stat-label">Difficulty</span>
           <p className="mt-1">
-            {save ? save.difficulty : "—"} (locked during a career)
+            {save ? difficultyLabel(save.difficulty) : "—"} (locked during a career)
           </p>
         </section>
 

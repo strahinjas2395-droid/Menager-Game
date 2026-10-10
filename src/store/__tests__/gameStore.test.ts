@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getMatchContext, useGameStore } from "@/store/gameStore";
 import { buildInstructionRoster, instructionContextFingerprint } from "@/engine/directives";
 import { LEAGUES_DATA, slugify } from "@/database/leagueGenerator";
-import { Difficulty, type MatchResult, type MatchStats } from "@/types";
+import { Difficulty, type MatchResult, type MatchStats, type PlayerMatchAnalysis } from "@/types";
 
 function emptyStats(): MatchStats {
   return {
@@ -36,6 +36,22 @@ function emptyStats(): MatchStats {
     dribblesAttemptedAway: 14,
     dribblesCompletedAway: 7,
     knockOnsAway: 4,
+  };
+}
+
+function detailedPlayer(playerId: string, clubId: string, side: "home" | "away", playerName: string): PlayerMatchAnalysis {
+  return {
+    playerId, clubId, side, playerName, shirtNumber: 9, position: "ST", started: true,
+    minuteOn: 0, minuteOff: 90, minutesPlayed: 90, rating: 7.4,
+    touches: 42, carries: 8, passesAttempted: 24, passesCompleted: 19, passesFailed: 5,
+    keyPasses: 2, throughBalls: 1, crossesAttempted: 0, crossesCompleted: 0,
+    shots: 3, shotsOnTarget: 2, goals: 0, assists: 1,
+    dribblesAttempted: 4, dribblesCompleted: 2, possessionLost: 9,
+    tacklesAttempted: 2, tacklesWon: 1, interceptions: 1, recoveries: 3,
+    clearances: 0, blocks: 0, aerialDuels: 3, aerialDuelsWon: 2,
+    foulsCommitted: 1, foulsWon: 2, offsides: 1, saves: 0,
+    yellowCards: 0, redCards: 0, distanceCoveredKm: 10.4, sprints: 17,
+    heatmap: Array(96).fill(1),
   };
 }
 
@@ -158,6 +174,13 @@ describe("core game loop (integration)", () => {
       const userSquad = s.world.clubs[s.userClubId].playerIds;
       const ratings: Record<string, number> = {};
       for (const pid of userSquad) ratings[pid] = 6.5 + ((pid.length % 10) / 10);
+      const tracked = s.world.players[userSquad[0]];
+      const playerReport = detailedPlayer(
+        tracked.id,
+        s.userClubId,
+        fixture.homeClubId === s.userClubId ? "home" : "away",
+        `${tracked.firstName} ${tracked.lastName}`,
+      );
       return {
         fixtureId,
         homeClubId: fixture.homeClubId,
@@ -166,6 +189,18 @@ describe("core game loop (integration)", () => {
         awayGoals: 1,
         stats: emptyStats(),
         ratings,
+        analysis: {
+          schemaVersion: 1,
+          heatmapColumns: 12,
+          heatmapRows: 8,
+          generatedAtMinute: 90,
+          initialHomeFormation: "4-3-3",
+          initialAwayFormation: "4-3-3",
+          finalHomeFormation: "4-3-3",
+          finalAwayFormation: "4-3-3",
+          players: { [tracked.id]: playerReport },
+          tacticalChanges: [],
+        },
         events: [],
       };
     };
@@ -216,14 +251,24 @@ describe("core game loop (integration)", () => {
     // news from user matches landed in the inbox
     expect(after.inbox.length).toBeGreaterThanOrEqual(2);
 
-    // results recorded
+    // Results carry permanent display metadata so they remain readable after
+    // season fixture regeneration; legacy results without telemetry still load.
     expect(Object.keys(after.results).length).toBeGreaterThanOrEqual(7);
+    for (const result of Object.values(after.results)) {
+      expect(result.seasonYear).toBeGreaterThanOrEqual(2026);
+      expect(result.week).toBeGreaterThan(0);
+      expect(result.competitionLabel).toBeTruthy();
+      expect(result.homeClubName).toBeTruthy();
+      expect(result.awayClubName).toBeTruthy();
+      expect(result.analysis?.players).toBeTruthy();
+    }
 
     // player season stats updated (user squad has appearances)
     const anyUserPlayer = after.world.clubs[clubId].playerIds
       .map((id) => after.world.players[id])
       .find((p) => p && p.seasonStats.appearances > 0);
     expect(anyUserPlayer).toBeTruthy();
+    expect(anyUserPlayer!.seasonStats.assists).toBeGreaterThan(0);
 
     // advancing further does not throw
     const r2 = store().advanceWeek();

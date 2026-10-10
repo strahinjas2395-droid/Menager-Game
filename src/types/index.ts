@@ -134,9 +134,14 @@ export enum PlayStyle {
 }
 
 export enum Difficulty {
+  Beginner = "Beginner",
   Amateur = "Amateur",
   SemiPro = "SemiPro",
   Professional = "Professional",
+  WorldClass = "WorldClass",
+  Legendary = "Legendary",
+  Ultimate = "Ultimate",
+  /** Legacy value retained so careers created before the expanded ladder load safely. */
   Legend = "Legend",
 }
 
@@ -574,6 +579,85 @@ export interface MatchStats {
   knockOnsAway: number;
 }
 
+export const MATCH_HEATMAP_COLUMNS = 12;
+export const MATCH_HEATMAP_ROWS = 8;
+
+/** Durable action ledger for one footballer in one match. */
+export interface PlayerMatchAnalysis {
+  playerId: string;
+  clubId: string;
+  side: "home" | "away";
+  playerName: string;
+  shirtNumber: number;
+  position: string;
+  started: boolean;
+  minuteOn: number;
+  minuteOff: number;
+  minutesPlayed: number;
+  rating: number;
+  touches: number;
+  carries: number;
+  passesAttempted: number;
+  passesCompleted: number;
+  passesFailed: number;
+  keyPasses: number;
+  throughBalls: number;
+  crossesAttempted: number;
+  crossesCompleted: number;
+  shots: number;
+  shotsOnTarget: number;
+  goals: number;
+  assists: number;
+  dribblesAttempted: number;
+  dribblesCompleted: number;
+  possessionLost: number;
+  tacklesAttempted: number;
+  tacklesWon: number;
+  interceptions: number;
+  recoveries: number;
+  clearances: number;
+  blocks: number;
+  aerialDuels: number;
+  aerialDuelsWon: number;
+  foulsCommitted: number;
+  foulsWon: number;
+  offsides: number;
+  saves: number;
+  yellowCards: number;
+  redCards: number;
+  distanceCoveredKm: number;
+  sprints: number;
+  /** Row-major 12x8 samples, always viewed with this player's team attacking right. */
+  heatmap: number[];
+}
+
+export interface TacticalChangeRecord {
+  side: "home" | "away";
+  clubId: string;
+  minute: number;
+  source: "user" | "ai";
+  reason: string;
+  formationBefore: string;
+  formationAfter: string;
+  changes: string[];
+  playerOffId?: string;
+  playerOnId?: string;
+}
+
+/** Versioned telemetry embedded in a result so reports survive future seasons. */
+export interface MatchAnalysis {
+  schemaVersion: 1;
+  heatmapColumns: typeof MATCH_HEATMAP_COLUMNS;
+  heatmapRows: typeof MATCH_HEATMAP_ROWS;
+  generatedAtMinute: number;
+  initialHomeFormation: string;
+  initialAwayFormation: string;
+  finalHomeFormation: string;
+  finalAwayFormation: string;
+  players: Record<string, PlayerMatchAnalysis>;
+  tacticalChanges: TacticalChangeRecord[];
+}
+
 export interface MatchResult {
   fixtureId: string;
   homeClubId: string;
@@ -585,6 +669,14 @@ export interface MatchResult {
   stats: MatchStats;
   ratings: Record<string, number>;
   events: MatchEvent[];
+  /** Added in save schema v1.1; absent on reports recorded by older careers. */
+  analysis?: MatchAnalysis;
+  /** Historical display metadata survives fixture regeneration at season end. */
+  seasonYear?: number;
+  week?: number;
+  competitionLabel?: string;
+  homeClubName?: string;
+  awayClubName?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -653,7 +745,7 @@ export interface GameSave {
   continental: ContinentalState;
   inbox: InboxMessage[];
   offers: TransferOffer[];
-  /** quick-sim results keyed by fixtureId */
+  /** Permanent user-match reports keyed by fixtureId, retained across seasons. */
   results: Record<string, MatchResult>;
   settings: GameSettings;
   savedAt: number;

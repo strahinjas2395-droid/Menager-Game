@@ -3,6 +3,7 @@ import {
   MatchSimulator,
   assignTacticalNumbers,
   buildTeamSide,
+  getAICoachProfile,
   selectBestXI,
   shotDecisionProbability,
   type TeamSide,
@@ -11,6 +12,7 @@ import { SeededRNG } from "@/database/rng";
 import { generateSquad } from "@/database/playerGenerator";
 import {
   DefensiveLine,
+  Difficulty,
   MentalityLevel,
   PlayStyle,
   PlaystyleTag,
@@ -186,6 +188,50 @@ describe("MatchSimulator", () => {
       expect(pos.y).toBeGreaterThanOrEqual(-5);
       expect(pos.y).toBeLessThanOrEqual(655);
     }
+  });
+
+  it("retains deterministic action ledgers and heatmaps for every player who appeared", () => {
+    const { sim } = setup(4242);
+    playFullMatch(sim);
+    const state = sim.getState();
+    const analysis = state.analysis;
+    expect(analysis).toBeDefined();
+    expect(analysis?.schemaVersion).toBe(1);
+    expect(Object.keys(analysis?.players ?? {}).length).toBeGreaterThanOrEqual(22);
+
+    const players = Object.values(analysis?.players ?? {});
+    const homePlayers = players.filter((player) => player.side === "home");
+    const awayPlayers = players.filter((player) => player.side === "away");
+    expect(homePlayers.reduce((sum, player) => sum + player.passesAttempted, 0)).toBe(state.stats.passesAttemptedHome);
+    expect(awayPlayers.reduce((sum, player) => sum + player.passesCompleted, 0)).toBe(state.stats.passesCompletedAway);
+    expect(players.reduce((sum, player) => sum + player.goals, 0)).toBe(state.homeScore + state.awayScore);
+    expect(players.some((player) => player.touches > 0)).toBe(true);
+    expect(players.some((player) => player.distanceCoveredKm > 0)).toBe(true);
+    expect(analysis?.tacticalChanges.some((change) => change.source === "ai")).toBe(true);
+    expect(analysis?.tacticalChanges.some((change) =>
+      change.changes.some((detail) => /Mentality|Pressing|Tempo|Formation/.test(detail)),
+    )).toBe(true);
+    for (const player of players) {
+      expect(player.heatmap).toHaveLength(96);
+      expect(player.minutesPlayed).toBeGreaterThan(0);
+      expect(player.passesFailed).toBe(Math.max(0, player.passesAttempted - player.passesCompleted));
+    }
+
+    const replay = setup(4242).sim;
+    playFullMatch(replay);
+    expect(replay.getAnalysis()).toEqual(sim.getAnalysis());
+  });
+
+  it("scales opposition observation and decisions across the expanded difficulty ladder", () => {
+    const beginner = getAICoachProfile(Difficulty.Beginner);
+    const professional = getAICoachProfile(Difficulty.Professional);
+    const ultimate = getAICoachProfile(Difficulty.Ultimate);
+    expect(beginner.firstReviewMinute).toBeGreaterThan(professional.firstReviewMinute);
+    expect(professional.firstReviewMinute).toBeGreaterThan(ultimate.firstReviewMinute);
+    expect(ultimate.reviewIntervalMinutes).toBeLessThan(beginner.reviewIntervalMinutes);
+    expect(ultimate.decisionQuality).toBeGreaterThan(professional.decisionQuality);
+    expect(ultimate.usesMatchTrends).toBe(true);
+    expect(beginner.usesMatchTrends).toBe(false);
   });
 
   it("accelerates, brakes and turns players according to physical attributes", () => {
@@ -452,6 +498,11 @@ describe("MatchSimulator", () => {
     // the subbed-in player came from the bench
     const benchIds = sim.home.bench.map((p: Player) => p.id);
     expect(after).toContain(benchIds[0]);
+    const report = sim.getAnalysis();
+    expect(report.players[before[3]].started).toBe(true);
+    expect(report.players[before[3]].minuteOff).toBe(45);
+    expect(report.players[benchIds[0]].started).toBe(false);
+    expect(report.players[benchIds[0]].minuteOn).toBe(45);
   });
 
   it("play styles produce materially different buildup, width, runs and carrying", () => {

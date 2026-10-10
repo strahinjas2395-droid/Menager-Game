@@ -6,7 +6,10 @@
  * Home defends x=0 and attacks x=1000; away is mirrored.
  */
 import {
+  Difficulty,
   MatchEventType,
+  MATCH_HEATMAP_COLUMNS,
+  MATCH_HEATMAP_ROWS,
   MentalityLevel,
   PlayStyle,
   PlaystyleTag,
@@ -15,9 +18,12 @@ import {
   TimeWasting,
   WidthSetting,
   DefensiveLine,
+  type MatchAnalysis,
   type MatchEvent,
   type MatchStats,
   type Player,
+  type PlayerMatchAnalysis,
+  type TacticalChangeRecord,
   type TacticalSetup,
 } from "@/types";
 import { SeededRNG, clamp } from "@/database/rng";
@@ -67,6 +73,13 @@ export interface TeamSide {
   basePositions: { x: number; y: number }[];
   tactics: TacticalSetup;
   isUserTeam: boolean;
+  /** Identity and tactical skill used by the adaptive opposition coach. */
+  manager?: {
+    id: string;
+    name: string;
+    tacticalFlexibility: number;
+    reputation: number;
+  };
   /** Parsed team-wide natural-language instruction. */
   teamDirectives?: PlayerDirectives;
   /** Parsed individual/assigned instructions, keyed by playerId (user team only). */
@@ -75,6 +88,8 @@ export interface TeamSide {
 
 export interface SimOptions {
   seed: number;
+  /** Career difficulty controls opposition observation, reaction and decision quality. */
+  difficulty?: Difficulty;
   /** match-clock seconds advanced per real second at speed 1 (default 6 => 90' in 15 min) */
   timeScale?: number;
   /**
@@ -124,6 +139,61 @@ interface SimPlayer {
   yellow: boolean;
   goals: number;
   assists: number;
+}
+
+interface PlayerTelemetryRuntime {
+  data: PlayerMatchAnalysis;
+  active: boolean;
+  secondsPlayed: number;
+  sprinting: boolean;
+}
+
+export interface AICoachProfile {
+  firstReviewMinute: number;
+  reviewIntervalMinutes: number;
+  decisionQuality: number;
+  usesMatchTrends: boolean;
+  canChangeFormation: boolean;
+  maxPlannedSubstitutions: number;
+}
+
+const AI_COACH_PROFILES: Record<Difficulty, AICoachProfile> = {
+  [Difficulty.Beginner]: {
+    firstReviewMinute: 65, reviewIntervalMinutes: 22, decisionQuality: 0.18,
+    usesMatchTrends: false, canChangeFormation: false, maxPlannedSubstitutions: 1,
+  },
+  [Difficulty.Amateur]: {
+    firstReviewMinute: 58, reviewIntervalMinutes: 18, decisionQuality: 0.3,
+    usesMatchTrends: false, canChangeFormation: false, maxPlannedSubstitutions: 2,
+  },
+  [Difficulty.SemiPro]: {
+    firstReviewMinute: 50, reviewIntervalMinutes: 15, decisionQuality: 0.46,
+    usesMatchTrends: false, canChangeFormation: true, maxPlannedSubstitutions: 3,
+  },
+  [Difficulty.Professional]: {
+    firstReviewMinute: 40, reviewIntervalMinutes: 12, decisionQuality: 0.63,
+    usesMatchTrends: true, canChangeFormation: true, maxPlannedSubstitutions: 4,
+  },
+  [Difficulty.WorldClass]: {
+    firstReviewMinute: 30, reviewIntervalMinutes: 9, decisionQuality: 0.77,
+    usesMatchTrends: true, canChangeFormation: true, maxPlannedSubstitutions: 5,
+  },
+  [Difficulty.Legendary]: {
+    firstReviewMinute: 22, reviewIntervalMinutes: 7, decisionQuality: 0.9,
+    usesMatchTrends: true, canChangeFormation: true, maxPlannedSubstitutions: 5,
+  },
+  [Difficulty.Ultimate]: {
+    firstReviewMinute: 15, reviewIntervalMinutes: 5, decisionQuality: 0.98,
+    usesMatchTrends: true, canChangeFormation: true, maxPlannedSubstitutions: 5,
+  },
+  [Difficulty.Legend]: {
+    firstReviewMinute: 22, reviewIntervalMinutes: 7, decisionQuality: 0.9,
+    usesMatchTrends: true, canChangeFormation: true, maxPlannedSubstitutions: 5,
+  },
+};
+
+export function getAICoachProfile(difficulty: Difficulty | string | undefined): AICoachProfile {
+  return AI_COACH_PROFILES[difficulty as Difficulty] ?? AI_COACH_PROFILES[Difficulty.SemiPro];
 }
 
 export type PassFlavor = "driven" | "std" | "through" | "switch" | "pullback" | "lofted";
@@ -295,6 +365,8 @@ export interface MatchSnapshot {
   stats: MatchStats;
   events: MatchEvent[];
   ratings: Record<string, number>;
+  /** Included at full time; omitted from live snapshots to keep worker messages small. */
+  analysis?: MatchAnalysis;
 }
 
 export interface LineupEntry {
@@ -373,7 +445,13 @@ export class MatchSimulator {
   private events: MatchEvent[] = [];
   private stats = emptyStats();
   private pendingState = false;
-  private aiChecksDone = new Set<string>();
+  private difficulty: Difficulty;
+  private coachProfile: AICoachProfile;
+  private aiNextReview: Record<Side, number> = { home: Infinity, away: Infinity };
+  private telemetry = new Map<string, PlayerTelemetryRuntime>();
+  private nextHeatmapSampleAt = 0;
+  private tacticalChanges: TacticalChangeRecord[] = [];
+  private readonly initialFormations: Record<Side, string>;
   /** Match-clock timestamp for throttled, inspectable instruction commentary. */
   private instructionCommentaryAt = new Map<string, number>();
   /** Avoid allocating a merged team/player object on every movement check. */
@@ -382,6 +460,7 @@ export class MatchSimulator {
     away: new Map(),
   };
   private subsUsed: Record<Side, number> = { home: 0, away: 0 };
+  private substitutedOut = new Set<string>();
   private stoppage = 0;
   private finished = false;
   private halftimeTaken = false;
@@ -398,9 +477,19 @@ export class MatchSimulator {
     this.rng = new SeededRNG(options.seed);
     this.timeScale = options.timeScale ?? 6;
     this.worldScale = options.worldScale ?? 0.5;
+    this.difficulty = options.difficulty ?? Difficulty.SemiPro;
+    this.coachProfile = getAICoachProfile(this.difficulty);
+    this.initialFormations = {
+      home: home.tactics.formation,
+      away: away.tactics.formation,
+    };
 
     this.homePlayers = this.buildPlayers(home);
     this.awayPlayers = this.buildPlayers(away);
+    this.homePlayers.forEach((sp) => this.createTelemetry("home", sp, true));
+    this.awayPlayers.forEach((sp) => this.createTelemetry("away", sp, true));
+    if (!home.isUserTeam) this.aiNextReview.home = this.coachProfile.firstReviewMinute;
+    if (!away.isUserTeam) this.aiNextReview.away = this.coachProfile.firstReviewMinute;
 
     this.stoppage = this.rng.int(90, 180);
     this.startKickoff("home", "start");
@@ -425,6 +514,148 @@ export class MatchSimulator {
         goals: 0, assists: 0,
       };
     });
+  }
+
+  private createTelemetry(side: Side, sp: SimPlayer, started: boolean): PlayerTelemetryRuntime {
+    const minute = Math.max(0, Math.floor(this.gameTime / 60));
+    const runtime: PlayerTelemetryRuntime = {
+      active: true,
+      secondsPlayed: 0,
+      sprinting: false,
+      data: {
+        playerId: sp.p.id,
+        clubId: this.team(side).clubId,
+        side,
+        playerName: `${sp.p.firstName} ${sp.p.lastName}`,
+        shirtNumber: sp.number,
+        position: sp.role,
+        started,
+        minuteOn: started ? 0 : minute,
+        minuteOff: minute,
+        minutesPlayed: 0,
+        rating: 6.5,
+        touches: 0,
+        carries: 0,
+        passesAttempted: 0,
+        passesCompleted: 0,
+        passesFailed: 0,
+        keyPasses: 0,
+        throughBalls: 0,
+        crossesAttempted: 0,
+        crossesCompleted: 0,
+        shots: 0,
+        shotsOnTarget: 0,
+        goals: 0,
+        assists: 0,
+        dribblesAttempted: 0,
+        dribblesCompleted: 0,
+        possessionLost: 0,
+        tacklesAttempted: 0,
+        tacklesWon: 0,
+        interceptions: 0,
+        recoveries: 0,
+        clearances: 0,
+        blocks: 0,
+        aerialDuels: 0,
+        aerialDuelsWon: 0,
+        foulsCommitted: 0,
+        foulsWon: 0,
+        offsides: 0,
+        saves: 0,
+        yellowCards: 0,
+        redCards: 0,
+        distanceCoveredKm: 0,
+        sprints: 0,
+        heatmap: Array(MATCH_HEATMAP_COLUMNS * MATCH_HEATMAP_ROWS).fill(0),
+      },
+    };
+    this.telemetry.set(sp.p.id, runtime);
+    return runtime;
+  }
+
+  private playerTelemetry(playerId: string | undefined): PlayerTelemetryRuntime | undefined {
+    return playerId ? this.telemetry.get(playerId) : undefined;
+  }
+
+  private addPlayerStat(playerId: string | undefined, key: keyof PlayerMatchAnalysis, amount = 1): void {
+    const runtime = this.playerTelemetry(playerId);
+    if (!runtime) return;
+    const numeric = runtime.data as unknown as Record<string, number>;
+    numeric[key] = (numeric[key] ?? 0) + amount;
+  }
+
+  private syncTelemetry(sp: SimPlayer, deactivate = false): void {
+    const runtime = this.playerTelemetry(sp.p.id);
+    if (!runtime) return;
+    runtime.data.rating = Number(clamp(sp.rating, 1, 10).toFixed(1));
+    runtime.data.goals = sp.goals;
+    runtime.data.assists = sp.assists;
+    runtime.data.yellowCards = sp.yellow ? 1 : 0;
+    runtime.data.redCards = sp.sentOff ? 1 : 0;
+    runtime.data.position = sp.role;
+    if (runtime.active || deactivate) {
+      runtime.data.minuteOff = Math.max(runtime.data.minuteOn, Math.floor(this.gameTime / 60));
+      runtime.data.minutesPlayed = Math.max(1, Math.round(runtime.secondsPlayed / 60));
+    }
+    if (deactivate) runtime.active = false;
+  }
+
+  private tickTelemetry(dtClock: number): void {
+    for (const side of ["home", "away"] as Side[]) {
+      for (const sp of this.players(side)) {
+        const runtime = this.playerTelemetry(sp.p.id);
+        if (!runtime || !runtime.active) continue;
+        runtime.secondsPlayed += dtClock;
+        const speed = Math.hypot(sp.vx, sp.vy) / UNITS_PER_METER;
+        runtime.data.distanceCoveredKm += (speed * dtClock) / 1000;
+        const sprintingNow = speed >= 6.35;
+        if (sprintingNow && !runtime.sprinting) runtime.data.sprints += 1;
+        runtime.sprinting = sprintingNow;
+        this.syncTelemetry(sp);
+        if (sp.sentOff) this.syncTelemetry(sp, true);
+      }
+    }
+
+    if (this.gameTime < this.nextHeatmapSampleAt) return;
+    this.nextHeatmapSampleAt = this.gameTime + 30;
+    for (const side of ["home", "away"] as Side[]) {
+      for (const sp of this.players(side)) {
+        const runtime = this.playerTelemetry(sp.p.id);
+        if (!runtime?.active || sp.sentOff) continue;
+        const viewedX = side === "home" ? sp.x : PITCH_W - sp.x;
+        const col = clamp(Math.floor((viewedX / PITCH_W) * MATCH_HEATMAP_COLUMNS), 0, MATCH_HEATMAP_COLUMNS - 1);
+        const row = clamp(Math.floor((sp.y / PITCH_H) * MATCH_HEATMAP_ROWS), 0, MATCH_HEATMAP_ROWS - 1);
+        runtime.data.heatmap[row * MATCH_HEATMAP_COLUMNS + col] += 1;
+      }
+    }
+  }
+
+  getAnalysis(): MatchAnalysis {
+    for (const side of ["home", "away"] as Side[]) {
+      for (const sp of this.players(side)) this.syncTelemetry(sp);
+    }
+    const players: Record<string, PlayerMatchAnalysis> = {};
+    for (const [playerId, runtime] of this.telemetry) {
+      const data = runtime.data;
+      players[playerId] = {
+        ...data,
+        passesFailed: Math.max(0, data.passesAttempted - data.passesCompleted),
+        distanceCoveredKm: Number(data.distanceCoveredKm.toFixed(2)),
+        heatmap: [...data.heatmap],
+      };
+    }
+    return {
+      schemaVersion: 1,
+      heatmapColumns: MATCH_HEATMAP_COLUMNS,
+      heatmapRows: MATCH_HEATMAP_ROWS,
+      generatedAtMinute: Math.floor(this.gameTime / 60),
+      initialHomeFormation: this.initialFormations.home,
+      initialAwayFormation: this.initialFormations.away,
+      finalHomeFormation: this.home.tactics.formation,
+      finalAwayFormation: this.away.tactics.formation,
+      players,
+      tacticalChanges: this.tacticalChanges.map((change) => ({ ...change, changes: [...change.changes] })),
+    };
   }
 
   private players(side: Side): SimPlayer[] {
@@ -471,8 +702,19 @@ export class MatchSimulator {
   }
 
   /** Apply tactical changes immediately without restarting the match. */
-  updateTactics(side: Side, tactics: TacticalSetup): void {
+  updateTactics(side: Side, tactics: TacticalSetup, reason?: string): void {
     const team = this.team(side);
+    const before = team.tactics;
+    const changed: string[] = [];
+    const labels: [keyof TacticalSetup, string][] = [
+      ["formation", "Formation"], ["playStyle", "Style"], ["mentality", "Mentality"],
+      ["tempo", "Tempo"], ["passingLength", "Passing length"], ["defensiveLine", "Defensive line"],
+      ["pressing", "Pressing"], ["width", "Width"], ["timeWasting", "Time wasting"],
+      ["counterAttack", "Counter attack"], ["offsideTrap", "Offside trap"],
+    ];
+    for (const [key, label] of labels) {
+      if (before[key] !== tactics[key]) changed.push(`${label}: ${String(before[key])} → ${String(tactics[key])}`);
+    }
     team.tactics = { ...tactics, positionOverrides: { ...tactics.positionOverrides } };
     const formation = getFormation(tactics.formation);
     const slots = side === "home" ? formation.positions : mirrorFormation(formation).positions;
@@ -507,9 +749,23 @@ export class MatchSimulator {
         : { x: slot.baseX, y: slot.baseY };
       team.roles[i] = slot.role;
       team.basePositions[i] = base;
+      const tracked = this.playerTelemetry(sp.p.id);
+      if (tracked) tracked.data.position = slot.role;
     });
     // Keep match numbers stable after kickoff so the manager can always track
     // the same player, even if their role changes with a formation switch.
+    if (changed.length > 0) {
+      this.tacticalChanges.push({
+        side,
+        clubId: team.clubId,
+        minute: Math.floor(this.gameTime / 60),
+        source: team.isUserTeam ? "user" : "ai",
+        reason: reason ?? (team.isUserTeam ? "Live manager adjustment" : "Opposition coach adjustment"),
+        formationBefore: before.formation,
+        formationAfter: tactics.formation,
+        changes: changed,
+      });
+    }
     this.pendingState = true;
   }
 
@@ -566,6 +822,7 @@ export class MatchSimulator {
     const dtWorld = dtReal * this.speed * this.worldScale;
     this.gameTime += dtClock;
     this.worldTime += dtWorld;
+    this.tickTelemetry(dtClock);
 
     // ---- added time at 90'
     if (this.gameTime >= 5400 && this.addedTime90 === 0) {
@@ -691,6 +948,7 @@ export class MatchSimulator {
       stats: this.getStats(),
       events: [...this.events],
       ratings: this.getRatings(),
+      analysis: this.phase === "fulltime" ? this.getAnalysis() : undefined,
     };
   }
 
@@ -710,6 +968,7 @@ export class MatchSimulator {
   private getRatings(): Record<string, number> {
     const out: Record<string, number> = {};
     for (const sp of [...this.homePlayers, ...this.awayPlayers]) {
+      this.syncTelemetry(sp);
       out[sp.p.id] = Number(clamp(sp.rating, 1, 10).toFixed(1));
     }
     return out;
@@ -736,8 +995,12 @@ export class MatchSimulator {
     const benchPlayer = team.bench[benchIdx];
     if (!target || !benchPlayer) return false;
     if (target.sentOff) return false;
+    if (this.substitutedOut.has(benchPlayer.id)) return false;
     if (players.some((sp) => sp.p.id === benchPlayer.id)) return false;
 
+    const outgoingId = target.p.id;
+    this.substitutedOut.add(outgoingId);
+    this.syncTelemetry(target, true);
     target.p = benchPlayer;
     target.rating = 6.5;
     target.energy = 1;
@@ -747,7 +1010,24 @@ export class MatchSimulator {
     target.brainNextAt = this.worldTime;
     target.nextTouchAt = this.worldTime;
     target.lastKnockOnAt = -Infinity;
+    target.sentOff = false;
+    target.yellow = false;
+    target.goals = 0;
+    target.assists = 0;
+    this.createTelemetry(side, target, false);
     this.subsUsed[side] += 1;
+    this.tacticalChanges.push({
+      side,
+      clubId: team.clubId,
+      minute: Math.floor(this.gameTime / 60),
+      source: team.isUserTeam ? "user" : "ai",
+      reason: team.isUserTeam ? "Manager substitution" : "Coach reacted with fresh legs",
+      formationBefore: team.tactics.formation,
+      formationAfter: team.tactics.formation,
+      changes: [`${this.telemetry.get(outgoingId)?.data.playerName ?? "Player"} off`, `${benchPlayer.firstName} ${benchPlayer.lastName} on`],
+      playerOffId: outgoingId,
+      playerOnId: benchPlayer.id,
+    });
     this.pushEvent(
       MatchEventType.Substitution,
       team.clubId,
@@ -1438,6 +1718,7 @@ export class MatchSimulator {
       this.controlledBallTarget.x = clamp(sp.x + dx * leadM * UNITS_PER_METER, -20, PITCH_W + 20);
       this.controlledBallTarget.y = clamp(sp.y + dy * leadM * UNITS_PER_METER, -20, PITCH_H + 20);
       sp.nextTouchAt = this.worldTime + cadence;
+      this.addPlayerStat(sp.p.id, "touches");
       this.lastTouchSide = side;
     }
 
@@ -1623,6 +1904,7 @@ export class MatchSimulator {
     ) {
       if (side === "home") this.stats.carriesHome += 1;
       else this.stats.carriesAway += 1;
+      this.addPlayerStat(sp.p.id, "carries");
       if (
         (paceAbuser || (sp.p.pace >= 16 && behavior.transition > 1.2)) &&
         this.worldTime - sp.lastKnockOnAt > 2.2 &&
@@ -1688,13 +1970,17 @@ export class MatchSimulator {
       if (defender) {
         if (side === "home") this.stats.dribblesAttemptedHome += 1;
         else this.stats.dribblesAttemptedAway += 1;
+        this.addPlayerStat(sp.p.id, "dribblesAttempted");
         const res = resolveDribble(sp.p, defender.p, this.rng);
-        this.statsTackleAttempt(this.other(side));
+        this.statsTackleAttempt(this.other(side), defender.p.id);
         if (res.foul) {
           this.awardFoul(side, defender, sp);
           return;
         }
         if (!res.beat) {
+          this.addPlayerStat(sp.p.id, "possessionLost");
+          this.addPlayerStat(defender.p.id, "tacklesWon");
+          this.addPlayerStat(defender.p.id, "recoveries");
           this.giveBallTo(this.other(side), this.indexOfPlayer(this.other(side), defender));
           this.lastTurnover = { side: this.other(side), t: this.worldTime };
           return;
@@ -1769,6 +2055,8 @@ export class MatchSimulator {
     const toY = clamp(sp.y + awayFromCentre * this.rng.float(65, 210), 22, 628);
     const distanceM = Math.hypot(toX - sp.x, toY - sp.y) / UNITS_PER_METER;
 
+    this.addPlayerStat(sp.p.id, "touches");
+    this.addPlayerStat(sp.p.id, "clearances");
     if (instructed) {
       this.pushInstructionCommentary(
         `clear:${side}`,
@@ -1845,7 +2133,9 @@ export class MatchSimulator {
       605,
     );
     const distM = Math.hypot(toX - sp.x, toY - sp.y) / UNITS_PER_METER;
-    this.statsPassAttempt(side);
+    this.statsPassAttempt(side, sp.p.id);
+    this.addPlayerStat(sp.p.id, "crossesAttempted");
+    this.addPlayerStat(sp.p.id, "touches");
     if (side === "home") this.stats.crossesHome += 1;
     else this.stats.crossesAway += 1;
     this.assistWindow = { side, playerId: sp.p.id, t: this.worldTime };
@@ -1867,9 +2157,10 @@ export class MatchSimulator {
     this.lastTouchSide = side;
   }
 
-  private statsTackleAttempt(side: Side): void {
+  private statsTackleAttempt(side: Side, playerId?: string): void {
     if (side === "home") this.stats.tacklesHome += 1;
     else this.stats.tacklesAway += 1;
+    this.addPlayerStat(playerId, "tacklesAttempted");
   }
 
   private indexOfPlayer(side: Side, sp: SimPlayer): number {
@@ -2155,7 +2446,10 @@ export class MatchSimulator {
     // Offside is judged at the kick, not when the ball arrives.
     if ((target.flavor === "through" || (target.x - sp.x) * this.attackDir(side) > 20) &&
         this.isOffside(side, receiver.x, sp.x)) {
-      this.statsPassAttempt(side);
+      this.statsPassAttempt(side, sp.p.id);
+      this.addPlayerStat(sp.p.id, "touches");
+      this.addPlayerStat(receiver.p.id, "offsides");
+      this.addPlayerStat(sp.p.id, "possessionLost");
       this.pushEvent(
         MatchEventType.Offside,
         this.team(side).clubId,
@@ -2226,10 +2520,12 @@ export class MatchSimulator {
       }
     }
 
-    this.statsPassAttempt(side);
+    this.statsPassAttempt(side, sp.p.id);
+    this.addPlayerStat(sp.p.id, "touches");
     if (flavor === "through") {
       if (side === "home") this.stats.throughBallsHome += 1;
       else this.stats.throughBallsAway += 1;
+      this.addPlayerStat(sp.p.id, "throughBalls");
     }
     this.bumpRating(sp, outcome.success ? 0.025 : -0.045);
     this.assistWindow = { side, playerId: sp.p.id, t: this.worldTime };
@@ -2291,13 +2587,7 @@ export class MatchSimulator {
     const pressure = this.pressureOn(side, this.indexOfPlayer(side, sp));
     const outcome = resolveShot(sp.p, gk.p, distM, angle, pressure, this.rng);
 
-    if (side === "home") {
-      this.stats.shotsHome += 1;
-      if (outcome.goal || outcome.saved) this.stats.shotsOnTargetHome += 1;
-    } else {
-      this.stats.shotsAway += 1;
-      if (outcome.goal || outcome.saved) this.stats.shotsOnTargetAway += 1;
-    }
+    this.recordShot(side, sp.p.id, outcome.goal || outcome.saved);
     this.bumpRating(sp, outcome.goal ? 0 : -0.03);
     if (distM >= 20) {
       this.pushEvent(
@@ -2424,6 +2714,9 @@ export class MatchSimulator {
 
     this.flight = null;
     this.ballHeight = 0;
+    this.addPlayerStat(candidate.sp.p.id, "interceptions");
+    this.addPlayerStat(candidate.sp.p.id, "recoveries");
+    this.addPlayerStat(f.passerId, "possessionLost");
     this.bumpRating(candidate.sp, 0.055);
     this.giveBallTo(this.other(f.side), candidate.idx);
     return true;
@@ -2447,12 +2740,15 @@ export class MatchSimulator {
       if (f.dribbleAttempt) {
         if (f.side === "home") this.stats.dribblesCompletedHome += 1;
         else this.stats.dribblesCompletedAway += 1;
+        this.addPlayerStat(runner.p.id, "dribblesCompleted");
       }
       this.bumpRating(runner, 0.04);
       this.giveBallTo(f.side, runnerIdx);
       return;
     }
     if (defender && defenderDistance < 20 && defenderDistance - defenderEdge < runnerDistance - runnerEdge) {
+      this.addPlayerStat(f.passerId, "possessionLost");
+      this.addPlayerStat(defender.p.id, "recoveries");
       this.giveBallTo(defending, defenderIdx);
       return;
     }
@@ -2474,11 +2770,13 @@ export class MatchSimulator {
     const side = f.side;
     const defending = this.other(side);
     if (f.toY <= 0 || f.toY >= PITCH_H) {
+      this.addPlayerStat(f.passerId, "possessionLost");
       this.lastTouchSide = side;
       this.startSetPiece("throw", defending, clamp(f.toX, 20, 980), f.toY <= 0 ? 5 : 645);
       return;
     }
     if (f.toX <= 0 || f.toX >= PITCH_W) {
+      this.addPlayerStat(f.passerId, "possessionLost");
       this.lastTouchSide = side;
       this.handleBallOutOverGoalLine(side, f.toY);
       return;
@@ -2499,11 +2797,18 @@ export class MatchSimulator {
       // not nearest-dot determinism, decide both.
       if (defender && dd < 34 && rd < 36 && (f.flavor === "lofted" || f.flavor === "switch")) {
         const winner = resolveAerialDuel(receiver.p, defender.p, this.rng);
+        this.addPlayerStat(receiver.p.id, "aerialDuels");
+        this.addPlayerStat(defender.p.id, "aerialDuels");
         if (winner === "a") {
-          if (f.countsAsPass !== false) this.statsPassComplete(side);
+          this.addPlayerStat(receiver.p.id, "aerialDuelsWon");
+          if (f.countsAsPass !== false) this.statsPassComplete(side, f.passerId);
           this.bumpRating(receiver, 0.035);
           this.giveBallTo(side, receiverIdx);
         } else {
+          this.addPlayerStat(defender.p.id, "aerialDuelsWon");
+          this.addPlayerStat(defender.p.id, "interceptions");
+          this.addPlayerStat(defender.p.id, "recoveries");
+          this.addPlayerStat(f.passerId, "possessionLost");
           this.bumpRating(defender, 0.06);
           this.giveBallTo(defending, defenderIdx);
         }
@@ -2512,9 +2817,12 @@ export class MatchSimulator {
       if (defender && dd < 22 && rd < 28) {
         const winner = resolveLooseBallDuel(receiver.p, defender.p, this.rng);
         if (winner === "a") {
-          if (f.countsAsPass !== false) this.statsPassComplete(side);
+          if (f.countsAsPass !== false) this.statsPassComplete(side, f.passerId, f.flavor === "pullback");
           this.giveBallTo(side, receiverIdx);
         } else {
+          this.addPlayerStat(defender.p.id, "interceptions");
+          this.addPlayerStat(defender.p.id, "recoveries");
+          this.addPlayerStat(f.passerId, "possessionLost");
           this.bumpRating(defender, 0.04);
           this.giveBallTo(defending, defenderIdx);
         }
@@ -2527,6 +2835,9 @@ export class MatchSimulator {
     }
 
     if (outcome.intercepted && defender && dd < 24) {
+      this.addPlayerStat(defender.p.id, "interceptions");
+      this.addPlayerStat(defender.p.id, "recoveries");
+      this.addPlayerStat(f.passerId, "possessionLost");
       this.bumpRating(defender, 0.05);
       this.giveBallTo(defending, defenderIdx);
       return;
@@ -2537,6 +2848,7 @@ export class MatchSimulator {
     const dy = f.toY - f.fromY;
     const d = Math.hypot(dx, dy) || 1;
     const roll = f.flavor === "through" ? 25 : 8;
+    this.addPlayerStat(f.passerId, "possessionLost");
     this.makeLoose(f.toX, f.toY, side, (dx / d) * roll, (dy / d) * roll);
   }
 
@@ -2556,11 +2868,14 @@ export class MatchSimulator {
       0.97,
     );
     if (this.rng.chance(controlProbability)) {
-      if (f.countsAsPass !== false) this.statsPassComplete(side);
+      this.addPlayerStat(receiver.p.id, "touches");
+      if (f.countsAsPass !== false) this.statsPassComplete(side, f.passerId, f.flavor === "pullback");
       this.giveBallTo(side, receiverIdx);
       return;
     }
 
+    this.addPlayerStat(receiver.p.id, "touches");
+    this.addPlayerStat(receiver.p.id, "possessionLost");
     // A failed first touch visibly escapes 1.5–4 metres. It can still be
     // recovered; there is no instantaneous dice-roll turnover.
     const dx = f.toX - f.fromX;
@@ -2586,7 +2901,10 @@ export class MatchSimulator {
     const defending = this.other(attacking);
 
     if (outcome.goal) {
-      this.awardGoal(attacking);
+      const scorer = f.passerId
+        ? this.players(attacking).find((player) => player.p.id === f.passerId)
+        : undefined;
+      this.awardGoal(attacking, scorer);
       return;
     }
     if (outcome.saved) {
@@ -2594,6 +2912,8 @@ export class MatchSimulator {
       if (gkIdx < 0) gkIdx = this.nearestPlayerIndex(defending, f.toX, f.toY);
       const gk = this.players(defending)[gkIdx];
       if (gk) {
+        this.addPlayerStat(gk.p.id, "saves");
+        this.addPlayerStat(gk.p.id, "recoveries");
         this.bumpRating(gk, 0.25);
         if (!f.penalty) {
           this.pushEvent(
@@ -2627,6 +2947,9 @@ export class MatchSimulator {
       return;
     }
     if (outcome.blocked) {
+      const blockerIdx = this.nearestPlayerIndex(defending, f.toX, f.toY);
+      const blocker = blockerIdx >= 0 ? this.players(defending)[blockerIdx] : undefined;
+      this.addPlayerStat(blocker?.p.id, "blocks");
       this.lastTouchSide = defending;
       const nearGoalLine = Math.abs(this.goalX(attacking) - f.toX) < 115;
       if (nearGoalLine && this.rng.chance(0.38)) {
@@ -2664,6 +2987,7 @@ export class MatchSimulator {
     const att = this.bestAt(attacking, f.toX, f.toY, (p) => p.heading + p.jumping);
     const def = this.bestAt(defending, f.toX, f.toY, (p) => p.aerialDuels + p.heading);
     if (!att || !def) {
+      this.addPlayerStat(f.passerId, "possessionLost");
       const idx = this.nearestPlayerIndex(defending, f.toX, f.toY);
       const nearest = idx >= 0 ? this.players(defending)[idx] : undefined;
       const nearestDistance = nearest ? Math.hypot(nearest.x - f.toX, nearest.y - f.toY) : Infinity;
@@ -2680,15 +3004,16 @@ export class MatchSimulator {
     const gk = this.players(defending).find((p) => p.role === "GK") ?? def;
     const danger = clamp(1 - Math.abs(f.toX - this.goalX(attacking)) / 400, 0.2, 1);
     const res = resolveHeader(att.p, def.p, gk.p, danger, this.rng);
+    this.addPlayerStat(att.p.id, "aerialDuels");
+    this.addPlayerStat(def.p.id, "aerialDuels");
     if (!res.cleared) {
-      this.statsPassComplete(attacking);
-      if (attacking === "home") {
-        this.stats.shotsHome += 1;
-        if (res.goal || res.saved) this.stats.shotsOnTargetHome += 1;
-      } else {
-        this.stats.shotsAway += 1;
-        if (res.goal || res.saved) this.stats.shotsOnTargetAway += 1;
-      }
+      this.addPlayerStat(att.p.id, "aerialDuelsWon");
+      this.statsPassComplete(attacking, f.passerId, true);
+      this.recordShot(attacking, att.p.id, res.goal || res.saved);
+    } else {
+      this.addPlayerStat(def.p.id, "aerialDuelsWon");
+      this.addPlayerStat(def.p.id, "clearances");
+      this.addPlayerStat(f.passerId, "possessionLost");
     }
 
     if (res.goal) {
@@ -2697,6 +3022,8 @@ export class MatchSimulator {
       return;
     }
     if (res.saved) {
+      this.addPlayerStat(gk.p.id, "saves");
+      this.addPlayerStat(gk.p.id, "recoveries");
       this.giveBallTo(defending, this.players(defending).indexOf(gk));
       this.bumpRating(gk, 0.25);
       this.pushEvent(
@@ -2765,10 +3092,16 @@ export class MatchSimulator {
     if (this.possessionSide !== side) {
       this.lastTurnover = { side, t: this.worldTime };
     }
+    if (this.looseDribbleRace && this.looseDribbleRace.side !== side) {
+      const runner = this.players(this.looseDribbleRace.side)[this.looseDribbleRace.idx];
+      this.addPlayerStat(runner?.p.id, "possessionLost");
+      this.addPlayerStat(p.p.id, "recoveries");
+    }
     if (this.looseDribbleRace?.side === side && this.looseDribbleRace.idx === idx) {
       if (this.looseDribbleRace.attempted) {
         if (side === "home") this.stats.dribblesCompletedHome += 1;
         else this.stats.dribblesCompletedAway += 1;
+        this.addPlayerStat(p.p.id, "dribblesCompleted");
       }
       this.bumpRating(p, 0.04);
     }
@@ -2914,10 +3247,13 @@ export class MatchSimulator {
         }
       }
 
-      this.statsTackleAttempt(this.other(side));
+      this.statsTackleAttempt(this.other(side), op.p.id);
       const res = resolveTackle(op.p, sp.p, this.rng);
       if (res.won) {
         const defending = this.other(side);
+        this.addPlayerStat(op.p.id, "tacklesWon");
+        this.addPlayerStat(op.p.id, "recoveries");
+        this.addPlayerStat(sp.p.id, "possessionLost");
         const nearDefendingGoal = Math.abs(op.x - this.ownGoalX(defending)) < 175;
         if (nearDefendingGoal && this.rng.chance(0.2)) {
           this.lastTouchSide = defending;
@@ -2949,6 +3285,8 @@ export class MatchSimulator {
   ): void {
     const foulSide = this.other(fouledSide);
     this.statsFoul(foulSide);
+    this.addPlayerStat(offender.p.id, "foulsCommitted");
+    this.addPlayerStat(victim.p.id, "foulsWon");
     this.bumpRating(offender, -0.12);
 
     let shown: "none" | "yellow" | "red" = card;
@@ -2999,14 +3337,37 @@ export class MatchSimulator {
     else this.stats.foulsAway += 1;
   }
 
-  private statsPassAttempt(side: Side): void {
-    if (side === "home") this.stats.passesAttemptedHome += 1;
-    else this.stats.passesAttemptedAway += 1;
+  private recordShot(side: Side, playerId: string | undefined, onTarget: boolean): void {
+    if (side === "home") {
+      this.stats.shotsHome += 1;
+      if (onTarget) this.stats.shotsOnTargetHome += 1;
+    } else {
+      this.stats.shotsAway += 1;
+      if (onTarget) this.stats.shotsOnTargetAway += 1;
+    }
+    this.addPlayerStat(playerId, "shots");
+    this.addPlayerStat(playerId, "touches");
+    if (onTarget) this.addPlayerStat(playerId, "shotsOnTarget");
+    if (
+      this.assistWindow?.side === side &&
+      this.assistWindow.playerId !== playerId &&
+      this.worldTime - this.assistWindow.t < 10
+    ) {
+      this.addPlayerStat(this.assistWindow.playerId, "keyPasses");
+    }
   }
 
-  private statsPassComplete(side: Side): void {
+  private statsPassAttempt(side: Side, playerId?: string): void {
+    if (side === "home") this.stats.passesAttemptedHome += 1;
+    else this.stats.passesAttemptedAway += 1;
+    this.addPlayerStat(playerId, "passesAttempted");
+  }
+
+  private statsPassComplete(side: Side, playerId?: string, cross = false): void {
     if (side === "home") this.stats.passesCompletedHome += 1;
     else this.stats.passesCompletedAway += 1;
+    this.addPlayerStat(playerId, "passesCompleted");
+    if (cross) this.addPlayerStat(playerId, "crossesCompleted");
   }
 
   // -------------------------------------------------------------------------
@@ -3291,6 +3652,7 @@ export class MatchSimulator {
       const toY = clamp(target.p.y + target.p.vy * 0.28, 10, 640);
       const distM = Math.hypot(toX - sp.x, toY - sp.y) / UNITS_PER_METER;
       const accurate = this.rng.chance(clamp(0.72 + taker.p.strength * 0.008 + taker.p.decisions * 0.006, 0.72, 0.94));
+      this.addPlayerStat(taker.p.id, "touches");
       this.launchFlight({
         kind: "pass",
         fromX: sp.x,
@@ -3332,7 +3694,9 @@ export class MatchSimulator {
       const zoneY = target ? target.y : PITCH_H / 2;
       const toX = clamp(zoneX + this.rng.float(-error * 0.5, error * 0.5), goalX === 0 ? 28 : 845, goalX === 0 ? 155 : 972);
       const toY = clamp(zoneY + this.rng.float(-error, error), 85, 565);
-      this.statsPassAttempt(side);
+      this.statsPassAttempt(side, taker?.p.id);
+      this.addPlayerStat(taker?.p.id, "crossesAttempted");
+      this.addPlayerStat(taker?.p.id, "touches");
       if (side === "home") this.stats.crossesHome += 1;
       else this.stats.crossesAway += 1;
       if (taker) this.assistWindow = { side, playerId: taker.p.id, t: this.worldTime };
@@ -3361,13 +3725,7 @@ export class MatchSimulator {
         );
         if (useDirect) {
           const outcome = resolveShot(taker.p, gk.p, distToGoal, angle, 0.45, this.rng);
-          if (side === "home") {
-            this.stats.shotsHome += 1;
-            if (outcome.goal || outcome.saved) this.stats.shotsOnTargetHome += 1;
-          } else {
-            this.stats.shotsAway += 1;
-            if (outcome.goal || outcome.saved) this.stats.shotsOnTargetAway += 1;
-          }
+          this.recordShot(side, taker.p.id, outcome.goal || outcome.saved);
           let toX: number;
           let toY: number;
           if (outcome.goal) {
@@ -3397,6 +3755,7 @@ export class MatchSimulator {
             dur: clamp(distToGoal / this.rng.float(20, 28), 0.2, 1.8),
             side,
             shotOutcome: outcome,
+            passerId: taker.p.id,
           });
           this.lastTouchSide = side;
           return;
@@ -3409,7 +3768,9 @@ export class MatchSimulator {
       if (distToGoal < 40 && this.rng.chance(0.45)) {
         const toX = goalX + dir * -this.rng.float(60, 130);
         const toY = clamp(PITCH_H / 2 + this.rng.float(-110, 110), 60, 590);
-        this.statsPassAttempt(side);
+        this.statsPassAttempt(side, taker.p.id);
+        this.addPlayerStat(taker.p.id, "crossesAttempted");
+        this.addPlayerStat(taker.p.id, "touches");
         if (side === "home") this.stats.crossesHome += 1;
         else this.stats.crossesAway += 1;
         this.assistWindow = { side, playerId: taker.p.id, t: this.worldTime };
@@ -3435,6 +3796,7 @@ export class MatchSimulator {
 
   private startPenalty(side: Side): void {
     this.phase = "penalty";
+    this.assistWindow = null;
     this.setPiece = null;
     this.carrier = null;
     this.flight = null;
@@ -3476,13 +3838,7 @@ export class MatchSimulator {
     }
 
     const res = resolvePenalty(taker.p, gk.p, this.rng);
-    if (side === "home") {
-      this.stats.shotsHome += 1;
-      this.stats.shotsOnTargetHome += 1;
-    } else {
-      this.stats.shotsAway += 1;
-      this.stats.shotsOnTargetAway += 1;
-    }
+    this.recordShot(side, taker.p.id, true);
 
     const goalX = this.goalX(side);
     if (res.goal) {
@@ -3502,6 +3858,7 @@ export class MatchSimulator {
         dur: 0.5,
         side,
         shotOutcome: { goal: true, saved: false, blocked: false, wide: false },
+        passerId: taker.p.id,
       });
       this.penaltyState = null;
       return;
@@ -3525,6 +3882,7 @@ export class MatchSimulator {
       dur: 0.5,
       side,
       shotOutcome: { goal: false, saved: true, blocked: false, wide: false },
+      passerId: taker.p.id,
       penalty: true,
     });
     this.penaltyState = null;
@@ -3649,69 +4007,152 @@ export class MatchSimulator {
   }
 
   // -------------------------------------------------------------------------
-  // AI manager adjustments (minutes 60, 75, 85)
+  // Adaptive AI manager — observation and reaction quality scale by difficulty
   // -------------------------------------------------------------------------
 
   private tickAIManager(): void {
     const minute = Math.floor(this.gameTime / 60);
     for (const side of ["home", "away"] as Side[]) {
-      const team = side === "home" ? this.home : this.away;
-      if (team.isUserTeam) continue;
-      for (const checkMin of [60, 75, 85]) {
-        const key = `${side}-${checkMin}`;
-        if (minute >= checkMin && !this.aiChecksDone.has(key)) {
-          this.aiChecksDone.add(key);
-          this.applyAIAdjustment(side, minute);
-        }
-      }
+      const team = this.team(side);
+      if (team.isUserTeam || minute < this.aiNextReview[side]) continue;
+      const flexibility = clamp((team.manager?.tacticalFlexibility ?? 10) / 20, 0.2, 1);
+      const delay = Math.round((1 - this.coachProfile.decisionQuality * flexibility) * 3);
+      this.aiNextReview[side] = minute + this.coachProfile.reviewIntervalMinutes + delay;
+      this.applyAIAdjustment(side, minute);
     }
   }
 
   private applyAIAdjustment(side: Side, minute: number): void {
-    const team = side === "home" ? this.home : this.away;
-    const t = team.tactics;
+    const team = this.team(side);
+    const current = team.tactics;
+    const next: TacticalSetup = {
+      ...current,
+      positionOverrides: { ...current.positionOverrides },
+      setPieces: { ...current.setPieces },
+    };
     const my = side === "home" ? this.homeScore : this.awayScore;
     const opp = side === "home" ? this.awayScore : this.homeScore;
     const diff = my - opp;
+    const matchStats = this.getStats();
+    const myShotsOnTarget = side === "home" ? matchStats.shotsOnTargetHome : matchStats.shotsOnTargetAway;
+    const oppShotsOnTarget = side === "home" ? matchStats.shotsOnTargetAway : matchStats.shotsOnTargetHome;
+    const myPossession = side === "home" ? matchStats.possessionHome : matchStats.possessionAway;
+    const flexibility = clamp((team.manager?.tacticalFlexibility ?? 10) / 20, 0.2, 1);
+    const reputation = clamp((team.manager?.reputation ?? 50) / 100, 0.2, 1);
+    const effectiveQuality = this.coachProfile.decisionQuality * (0.55 + flexibility * 0.3 + reputation * 0.15);
+    const seesTrend = this.coachProfile.usesMatchTrends && effectiveQuality >= 0.5;
+    const beingOutplayed = seesTrend && (oppShotsOnTarget >= myShotsOnTarget + 3 || myPossession < 39);
+    const chasing = diff < 0 || (diff === 0 && minute >= 62 && beingOutplayed);
+    const protecting = diff > 0 && minute >= Math.round(82 - effectiveQuality * 30);
+    const stalemate = diff === 0 && minute >= Math.round(78 - effectiveQuality * 25);
+    let reason = "Rebalanced the match plan";
 
-    if (diff <= -2) {
-      t.mentality = Math.min(MentalityLevel.UltraAttacking, (t.mentality ?? 3) + 2);
-      t.pressing = Math.min(PressingIntensity.Extreme, (t.pressing ?? 2) + 1);
-      t.tempo = Math.min(TempoSetting.VeryFast, (t.tempo ?? 2) + 1);
-    } else if (diff < 0) {
-      t.mentality = Math.min(MentalityLevel.UltraAttacking, (t.mentality ?? 3) + 1);
-      t.pressing = Math.min(PressingIntensity.Extreme, (t.pressing ?? 2) + 1);
-    } else if (diff >= 2 && minute >= 70) {
-      t.mentality = Math.max(MentalityLevel.UltraDefensive, (t.mentality ?? 3) - 2);
-      t.timeWasting = TimeWasting.Late;
-      t.pressing = Math.max(PressingIntensity.None, (t.pressing ?? 2) - 1);
-    } else if (diff === 0 && minute === 60) {
-      t.pressing = Math.min(PressingIntensity.Extreme, (t.pressing ?? 2) + 1);
-      t.tempo = Math.min(TempoSetting.VeryFast, (t.tempo ?? 2) + 1);
-    } else {
-      return;
-    }
-
-    // substitution: worst-rated outfield starter off
-    if (this.subsUsed[side] < 3 && team.bench.length > 0) {
-      const players = this.players(side);
-      const bench = team.bench;
-      let worstIdx = -1;
-      let worstRating = 99;
-      players.forEach((sp, i) => {
-        if (sp.sentOff || sp.role === "GK") return;
-        if (sp.rating < worstRating) {
-          worstRating = sp.rating;
-          worstIdx = i;
+    // Poorer coaches observe later and sometimes decline to act even when the
+    // score calls for it. Elite coaches use shot/possession trends before the
+    // score changes and make smaller, earlier corrections.
+    const acts = chasing || protecting || stalemate || beingOutplayed;
+    if (acts && this.rng.chance(clamp(0.35 + effectiveQuality * 0.64, 0.35, 0.99))) {
+      if (chasing) {
+        const desperate = minute >= 78 || diff <= -2;
+        next.mentality = desperate ? MentalityLevel.UltraAttacking : MentalityLevel.Attacking;
+        next.tempo = desperate ? TempoSetting.VeryFast : TempoSetting.Fast;
+        next.pressing = desperate ? PressingIntensity.Extreme : PressingIntensity.High;
+        next.defensiveLine = desperate ? DefensiveLine.VeryHigh : DefensiveLine.High;
+        next.timeWasting = TimeWasting.Never;
+        next.counterAttack = true;
+        next.playStyle = effectiveQuality > 0.72 ? PlayStyle.GegenpressingStyle : current.playStyle;
+        reason = diff < 0 ? `Chasing the game at ${my}-${opp}` : "Responding to the chance and territory trend";
+        if (
+          this.coachProfile.canChangeFormation && flexibility >= 0.45 &&
+          this.rng.chance(clamp(effectiveQuality * 0.95, 0.2, 0.95))
+        ) {
+          next.formation = desperate ? (diff <= -2 ? "4-2-4" : "3-4-3") : "4-3-3";
+          next.positionOverrides = {};
         }
-      });
-      const benchIdx = bench.findIndex(
-        (bp) => !players.some((sp) => sp.p.id === bp.id) && bp.primaryPosition !== "GK",
-      );
-      if (worstIdx >= 0 && benchIdx >= 0 && worstRating < 7.0) {
-        this.substitute(side, worstIdx, benchIdx);
+      } else if (protecting) {
+        next.mentality = diff >= 2 ? MentalityLevel.Defensive : MentalityLevel.Cautious;
+        next.defensiveLine = diff >= 2 ? DefensiveLine.Deep : DefensiveLine.Normal;
+        next.pressing = minute >= 82 ? PressingIntensity.Standard : PressingIntensity.High;
+        next.tempo = TempoSetting.Normal;
+        next.timeWasting = minute >= 82 ? TimeWasting.Always : TimeWasting.Late;
+        next.counterAttack = true;
+        if (effectiveQuality > 0.68) next.playStyle = PlayStyle.DirectCounterAttack;
+        reason = `Protecting a ${my}-${opp} lead without surrendering the counter`;
+        if (
+          this.coachProfile.canChangeFormation && flexibility >= 0.55 && minute >= 72 &&
+          this.rng.chance(clamp(effectiveQuality * 0.85, 0.15, 0.9))
+        ) {
+          next.formation = diff >= 2 ? "5-4-1" : "4-5-1";
+          next.positionOverrides = {};
+        }
+      } else if (beingOutplayed) {
+        next.defensiveLine = Math.max(DefensiveLine.Deep, (current.defensiveLine ?? DefensiveLine.Normal) - 1);
+        next.pressing = PressingIntensity.High;
+        next.width = WidthSetting.Narrow;
+        next.tempo = TempoSetting.Fast;
+        reason = "Closed central spaces after reading the opponent's pressure";
+      } else if (stalemate) {
+        next.mentality = MentalityLevel.Positive;
+        next.tempo = TempoSetting.Fast;
+        next.width = WidthSetting.Wide;
+        next.pressing = PressingIntensity.High;
+        reason = "Sought a late winner by stretching the pitch";
       }
     }
+
+    const changed =
+      next.formation !== current.formation || next.playStyle !== current.playStyle ||
+      next.mentality !== current.mentality || next.tempo !== current.tempo ||
+      next.passingLength !== current.passingLength || next.defensiveLine !== current.defensiveLine ||
+      next.pressing !== current.pressing || next.width !== current.width ||
+      next.timeWasting !== current.timeWasting || next.counterAttack !== current.counterAttack;
+    if (changed) {
+      this.updateTactics(side, next, reason);
+      this.pushEvent(
+        MatchEventType.Instruction,
+        team.clubId,
+        undefined,
+        `${team.manager?.name ?? `${team.shortName} coach`}: ${reason}.`,
+      );
+    }
+
+    this.tryAISubstitution(side, minute, effectiveQuality);
+  }
+
+  private tryAISubstitution(side: Side, minute: number, quality: number): void {
+    const team = this.team(side);
+    if (
+      minute < 52 || this.subsUsed[side] >= this.coachProfile.maxPlannedSubstitutions ||
+      this.subsUsed[side] >= 5 || team.bench.length === 0
+    ) return;
+    const players = this.players(side);
+    const candidates = players
+      .map((sp, idx) => ({
+        sp,
+        idx,
+        need: (1 - sp.energy) * 5 + Math.max(0, 6.8 - sp.rating) * 1.35 + (sp.yellow ? 0.7 : 0),
+      }))
+      .filter(({ sp }) => !sp.sentOff && sp.role !== "GK")
+      .sort((a, b) => b.need - a.need);
+    const threshold = minute >= 78 ? 0.35 : minute >= 65 ? 0.75 : 1.25;
+    if (!candidates[0] || candidates[0].need < threshold) return;
+
+    const shortlist = candidates.slice(0, quality >= 0.75 ? 2 : quality >= 0.45 ? 3 : 5);
+    const off = quality >= 0.72 ? shortlist[0] : this.rng.pick(shortlist);
+    const availableBench = team.bench
+      .map((player, idx) => ({ player, idx }))
+      .filter(({ player }) => !this.substitutedOut.has(player.id) && !players.some((sp) => sp.p.id === player.id));
+    if (availableBench.length === 0) return;
+    availableBench.sort((a, b) => {
+      const fit = roleFitScore(b.player, off.sp.role) - roleFitScore(a.player, off.sp.role);
+      if (fit !== 0) return fit;
+      return b.player.naturalFitness + b.player.reputation * 0.08 -
+        (a.player.naturalFitness + a.player.reputation * 0.08);
+    });
+    const benchChoice = quality >= 0.55
+      ? availableBench[0]
+      : this.rng.pick(availableBench.slice(0, Math.min(3, availableBench.length)));
+    this.substitute(side, off.idx, benchChoice.idx);
   }
 
   // -------------------------------------------------------------------------
@@ -3900,6 +4341,7 @@ export function buildTeamSide(opts: {
   squad: Player[];
   tactics: TacticalSetup;
   isUserTeam: boolean;
+  manager?: TeamSide["manager"];
   teamDirectives?: PlayerDirectives;
   directives?: Record<string, PlayerDirectives>;
 }): TeamSide {
@@ -3928,6 +4370,7 @@ export function buildTeamSide(opts: {
     displayNumbers: assignTacticalNumbers(roles),
     basePositions: positions,
     tactics: opts.tactics,
+    manager: opts.manager,
     teamDirectives: opts.teamDirectives,
     directives: opts.directives,
     isUserTeam: opts.isUserTeam,
