@@ -27,12 +27,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: "38088820544"
         run: |
+          artifact_id="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts" \
+            --jq '.artifacts[] | select(.name == "FootballManagerContinental-Android") | .id')"
+          test -n "$artifact_id"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > apk-artifact.zip
           mkdir -p artifacts
-          gh run download "$SOURCE_RUN_ID" \
-            --name FootballManagerContinental-Android \
-            --dir artifacts
+          unzip -q apk-artifact.zip -d artifacts
           test -s artifacts/FootballManagerContinental-debug.apk
-          (cd artifacts && sha256sum --check FootballManagerContinental-debug.apk.sha256)
+          expected="$(cut -d ' ' -f 1 artifacts/FootballManagerContinental-debug.apk.sha256)"
+          actual="$(sha256sum artifacts/FootballManagerContinental-debug.apk | cut -d ' ' -f 1)"
+          test "$actual" = "$expected"
 
       - name: Publish APK to this branch
         run: |
