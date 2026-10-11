@@ -1,0 +1,1602 @@
+{
+  "Manchester Sky": {
+    "club": "Manchester City",
+    "competition": "GB1"
+  },
+  "Liverpool Mersey": {
+    "club": "Liverpool FC",
+    "competition": "GB1"
+  },
+  "North London Cannons": {
+    "club": "Arsenal FC",
+    "competition": "GB1"
+  },
+  "Chelsea Borough": {
+    "club": "Chelsea FC",
+    "competition": "GB1"
+  },
+  "Manchester Scarlet": {
+    "club": "Manchester United",
+    "competition": "GB1"
+  },
+  "Tottenham White Hart": {
+    "club": "Tottenham Hotspur",
+    "competition": "GB1"
+  },
+  "Newcastle Magpies": {
+    "club": "Newcastle United",
+    "competition": "GB1"
+  },
+  "Birmingham Villans": {
+    "club": "Aston Villa",
+    "competition": "GB1"
+  },
+  "Brighton Seabirds": {
+    "club": "Brighton & Hove Albion",
+    "competition": "GB1"
+  },
+  "West London Bees": {
+    "club": "Brentford FC",
+    "competition": "GB1"
+  },
+  "East London Irons": {
+    "club": "West Ham United",
+    "competition": "GB1"
+  },
+  "South London Eagles": {
+    "club": "Crystal Palace",
+    "competition": "GB1"
+  },
+  "Fulham Riverside": {
+    "club": "Fulham FC",
+    "competition": "GB1"
+  },
+  "Everton Royal Blue": {
+    "club": "Everton FC",
+    "competition": "GB1"
+  },
+  "Wolverhampton Gold": {
+    "club": "Wolverhampton Wanderers",
+    "competition": "GB1"
+  },
+  "Bournemouth Cherries": {
+    "club": "AFC Bournemouth",
+    "competition": "GB1"
+  },
+  "Nottingham Sherwood": {
+    "club": "Nottingham Forest",
+    "competition": "GB1"
+  },
+  "Leicester Foxes": {
+    "club": "Leicester City",
+    "competition": "GB1"
+  },
+  "Southampton Saints": {
+    "club": "Southampton FC",
+    "competition": "GB1"
+  },
+  "Ipswich Tractor Boys": {
+    "club": "Ipswich Town",
+    "competition": "GB1"
+  },
+  "Leeds White Rose": {
+    "club": "Leeds United",
+    "competition": "GB1"
+  },
+  "Burnley Claret": {
+    "club": "Burnley FC",
+    "competition": "GB1"
+  },
+  "Sheffield Blades": {
+    "club": "Sheffield United",
+    "competition": "GB1"
+  },
+  "Sunderland Black Cats": {
+    "club": "Sunderland AFC",
+    "competition": "GB1"
+  },
+  "Middlesbrough Teesside": {
+    "club": "Middlesbrough FC",
+    "competition": "GB1"
+  },
+  "Coventry Sky Blue": {
+    "club": "Coventry City",
+    "competition": "GB1"
+  },
+  "Norwich Canaries": {
+    "club": "Norwich City",
+    "competition": "GB1"
+  },
+  "Watford Hornets": {
+    "club": "Watford FC",
+    "competition": "GB1"
+  },
+  "West Bromwich Stripes": {
+    "club": "West Bromwich Albion",
+    "competition": "GB1"
+  },
+  "Blackburn Blue Rose": {
+    "club": "Blackburn Rovers",
+    "competition": "GB1"
+  },
+  "Bristol Robins": {
+    "club": "Bristol City",
+    "competition": "GB1"
+  },
+  "Swansea Swans": {
+    "club": "Swansea City",
+    "competition": "GB1"
+  },
+  "Cardiff Dragons": {
+    "club": "Cardiff City",
+    "competition": "GB1"
+  },
+  "Stoke Potters": {
+    "club": "Stoke City",
+    "competition": "GB1"
+  },
+  "Hull Tigers": {
+    "club": "Hull City",
+    "competition": "GB1"
+  },
+  "Preston Lilywhites": {
+    "club": "Preston North End",
+    "competition": "GB1"
+  },
+  "Derby Rams": {
+    "club": "Derby County",
+    "competition": "GB1"
+  },
+  "Portsmouth Harbour": {
+    "club": "Portsmouth FC",
+    "competition": "GB1"
+  },
+  "West London Hoops": {
+    "club": "Queens Park Rangers",
+    "competition": "GB1"
+  },
+  "Millwall Lions": {
+    "club": "Millwall FC",
+    "competition": "GB1"
+  },
+  "Madrid Royal White": {
+    "club": "Real Madrid",
+    "competition": "ES1"
+  },
+  "Barcelona Blau": {
+    "club": "FC Barcelona",
+    "competition": "ES1"
+  },
+  "Madrid Red-White": {
+    "club": "Atlético de Madrid",
+    "competition": "ES1"
+  },
+  "Bilbao Lions": {
+    "club": "Athletic Bilbao",
+    "competition": "ES1"
+  },
+  "San Sebastian Royal": {
+    "club": "Real Sociedad",
+    "competition": "ES1"
+  },
+  "Villarreal Yellow": {
+    "club": "Villarreal CF",
+    "competition": "ES1"
+  },
+  "Seville Green-White": {
+    "club": "Real Betis Balompié",
+    "competition": "ES1"
+  },
+  "Seville Nervion": {
+    "club": "Sevilla FC",
+    "competition": "ES1"
+  },
+  "Valencia Bats": {
+    "club": "Valencia CF",
+    "competition": "ES1"
+  },
+  "Girona Red": {
+    "club": "Girona FC",
+    "competition": "ES1"
+  },
+  "Vigo Celts": {
+    "club": "Celta de Vigo",
+    "competition": "ES1"
+  },
+  "Pamplona Reds": {
+    "club": "CA Osasuna",
+    "competition": "ES1"
+  },
+  "Mallorca Islanders": {
+    "club": "RCD Mallorca",
+    "competition": "ES1"
+  },
+  "Getafe Azul": {
+    "club": "Getafe CF",
+    "competition": "ES1"
+  },
+  "Vallecano Bolts": {
+    "club": "Rayo Vallecano",
+    "competition": "ES1"
+  },
+  "Las Palmas Gold": {
+    "club": "UD Las Palmas",
+    "competition": "ES1"
+  },
+  "Alaves Blue-White": {
+    "club": "Deportivo Alavés",
+    "competition": "ES1"
+  },
+  "Leganes Cucumber": {
+    "club": "CD Leganés",
+    "competition": "ES1"
+  },
+  "Valladolid Violet": {
+    "club": "Real Valladolid",
+    "competition": "ES1"
+  },
+  "Barcelona Parakeets": {
+    "club": "RCD Espanyol Barcelona",
+    "competition": "ES1"
+  },
+  "Zaragoza Lions": {
+    "club": "Real Zaragoza",
+    "competition": "ES1"
+  },
+  "Gijon Red-White": {
+    "club": "Sporting Gijón",
+    "competition": "ES1"
+  },
+  "Oviedo Blue": {
+    "club": "Real Oviedo",
+    "competition": "ES1"
+  },
+  "Santander Green": {
+    "club": "Racing Santander",
+    "competition": "ES1"
+  },
+  "Eibar Armourers": {
+    "club": "SD Eibar",
+    "competition": "ES1"
+  },
+  "Levante Frogs": {
+    "club": "Levante UD",
+    "competition": "ES1"
+  },
+  "Elche Palms": {
+    "club": "Elche CF",
+    "competition": "ES1"
+  },
+  "Granada Nazar": {
+    "club": "Granada CF",
+    "competition": "ES1"
+  },
+  "Almeria Indalo": {
+    "club": "UD Almería",
+    "competition": "ES1"
+  },
+  "Cadiz Yellow": {
+    "club": "Cádiz CF",
+    "competition": "ES1"
+  },
+  "Cordoba Caliphs": {
+    "club": "Córdoba CF",
+    "competition": "ES1"
+  },
+  "Malaga Anchovies": {
+    "club": "Málaga CF",
+    "competition": "ES1"
+  },
+  "Tenerife Chicharro": {
+    "club": "CD Tenerife",
+    "competition": "ES1"
+  },
+  "Coruna Hercules": {
+    "club": "Deportivo de La Coruña",
+    "competition": "ES1"
+  },
+  "Castellon Black-White": {
+    "club": "CD Castellón",
+    "competition": "ES1"
+  },
+  "Burgos Castle": {
+    "club": "Burgos CF",
+    "competition": "ES1"
+  },
+  "Huesca Pyrenees": {
+    "club": "SD Huesca",
+    "competition": "ES1"
+  },
+  "Mirandes Boars": {
+    "club": "CD Mirandés",
+    "competition": "ES1"
+  },
+  "Albacete Manchego": {
+    "club": "Albacete Balompié",
+    "competition": "ES1"
+  },
+  "Ferrol Arsenal": {
+    "club": "Racing Ferrol",
+    "competition": "ES1"
+  },
+  "Milan Redblack": {
+    "club": "AC Milan",
+    "competition": "IT1"
+  },
+  "Milan Nerazzurro": {
+    "club": "Inter Milan",
+    "competition": "IT1"
+  },
+  "Turin Zebra": {
+    "club": "Juventus FC",
+    "competition": "IT1"
+  },
+  "Naples Azure": {
+    "club": "SSC Napoli",
+    "competition": "IT1"
+  },
+  "Rome Wolves": {
+    "club": "AS Roma",
+    "competition": "IT1"
+  },
+  "Rome Eagles": {
+    "club": "SS Lazio",
+    "competition": "IT1"
+  },
+  "Bergamo Goddess": {
+    "club": "Atalanta BC",
+    "competition": "IT1"
+  },
+  "Florence Viola": {
+    "club": "ACF Fiorentina",
+    "competition": "IT1"
+  },
+  "Bologna Redblue": {
+    "club": "Bologna FC 1909",
+    "competition": "IT1"
+  },
+  "Turin Bull": {
+    "club": "Torino FC",
+    "competition": "IT1"
+  },
+  "Genoa Griffin": {
+    "club": "Genoa CFC",
+    "competition": "IT1"
+  },
+  "Genoa Sailors": {
+    "club": "UC Sampdoria",
+    "competition": "IT1"
+  },
+  "Udine Zebrette": {
+    "club": "Udinese Calcio",
+    "competition": "IT1"
+  },
+  "Parma Ducals": {
+    "club": "Parma Calcio 1913",
+    "competition": "IT1"
+  },
+  "Verona Mastiffs": {
+    "club": "Hellas Verona",
+    "competition": "IT1"
+  },
+  "Cagliari Islanders": {
+    "club": "Cagliari Calcio",
+    "competition": "IT1"
+  },
+  "Lecce Salento": {
+    "club": "US Lecce",
+    "competition": "IT1"
+  },
+  "Monza Crown": {
+    "club": "AC Monza",
+    "competition": "IT1"
+  },
+  "Como Lake": {
+    "club": "Como 1907",
+    "competition": "IT1"
+  },
+  "Venice Winged Lions": {
+    "club": "Venezia FC",
+    "competition": "IT1"
+  },
+  "Paris Stars": {
+    "club": "Paris Saint-Germain",
+    "competition": "FR1"
+  },
+  "Marseille Phoceans": {
+    "club": "Olympique Marseille",
+    "competition": "FR1"
+  },
+  "Monaco Principality": {
+    "club": "AS Monaco",
+    "competition": "FR1"
+  },
+  "Lyon Lions": {
+    "club": "Olympique Lyon",
+    "competition": "FR1"
+  },
+  "Lille Mastiffs": {
+    "club": "LOSC Lille",
+    "competition": "FR1"
+  },
+  "Nice Eaglets": {
+    "club": "OGC Nice",
+    "competition": "FR1"
+  },
+  "Lens Blood-Gold": {
+    "club": "RC Lens",
+    "competition": "FR1"
+  },
+  "Brittany Redblack": {
+    "club": "Stade Rennais FC",
+    "competition": "FR1"
+  },
+  "Strasbourg Alsace": {
+    "club": "RC Strasbourg Alsace",
+    "competition": "FR1"
+  },
+  "Toulouse Violet": {
+    "club": "Toulouse FC",
+    "competition": "FR1"
+  },
+  "Nantes Canaries": {
+    "club": "FC Nantes",
+    "competition": "FR1"
+  },
+  "Montpellier Paillade": {
+    "club": "Montpellier HSC",
+    "competition": "FR1"
+  },
+  "Bordeaux Girondins": {
+    "club": "Girondins Bordeaux",
+    "competition": "FR1"
+  },
+  "Saint-Etienne Greens": {
+    "club": "AS Saint-Étienne",
+    "competition": "FR1"
+  },
+  "Auxerre Burgundy": {
+    "club": "AJ Auxerre",
+    "competition": "FR1"
+  },
+  "Reims Champagne": {
+    "club": "Stade Reims",
+    "competition": "FR1"
+  },
+  "Brest Pirates": {
+    "club": "Stade Brestois 29",
+    "competition": "FR1"
+  },
+  "Lorient Hakes": {
+    "club": "FC Lorient",
+    "competition": "FR1"
+  },
+  "Metz Maroon": {
+    "club": "FC Metz",
+    "competition": "FR1"
+  },
+  "Le Havre Sky-Navy": {
+    "club": "Le Havre AC",
+    "competition": "FR1"
+  },
+  "Munich Red": {
+    "club": "Bayern Munich",
+    "competition": "L1"
+  },
+  "Dortmund Yellow Wall": {
+    "club": "Borussia Dortmund",
+    "competition": "L1"
+  },
+  "Leverkusen Werkself": {
+    "club": "Bayer 04 Leverkusen",
+    "competition": "L1"
+  },
+  "Leipzig Bulls": {
+    "club": "RB Leipzig",
+    "competition": "L1"
+  },
+  "Frankfurt Eagles": {
+    "club": "Eintracht Frankfurt",
+    "competition": "L1"
+  },
+  "Stuttgart Swabians": {
+    "club": "VfB Stuttgart",
+    "competition": "L1"
+  },
+  "Freiburg Breisgau": {
+    "club": "SC Freiburg",
+    "competition": "L1"
+  },
+  "Wolfsburg Wolves": {
+    "club": "VfL Wolfsburg",
+    "competition": "L1"
+  },
+  "Gladbach Foals": {
+    "club": "Borussia Mönchengladbach",
+    "competition": "L1"
+  },
+  "Bremen Green-White": {
+    "club": "Werder Bremen",
+    "competition": "L1"
+  },
+  "Berlin Union": {
+    "club": "Union Berlin",
+    "competition": "L1"
+  },
+  "Mainz Carnival": {
+    "club": "Mainz 05",
+    "competition": "L1"
+  },
+  "Augsburg Fugger": {
+    "club": "FC Augsburg",
+    "competition": "L1"
+  },
+  "Hoffenheim Village": {
+    "club": "TSG 1899 Hoffenheim",
+    "competition": "L1"
+  },
+  "Hamburg Harbour": {
+    "club": "Hamburger SV",
+    "competition": "L1"
+  },
+  "Schalke Miners": {
+    "club": "Schalke 04",
+    "competition": "L1"
+  },
+  "Cologne Goats": {
+    "club": "FC Köln",
+    "competition": "L1"
+  },
+  "Berlin Blue-White": {
+    "club": "Hertha BSC",
+    "competition": "L1"
+  },
+  "Nuremberg Franconians": {
+    "club": "1.FC Nürnberg",
+    "competition": "L1"
+  },
+  "Kaiserslautern Red Devils": {
+    "club": "1.FC Kaiserslautern",
+    "competition": "L1"
+  },
+  "Hannover Reds": {
+    "club": "Hannover 96",
+    "competition": "L1"
+  },
+  "Dusseldorf Fortune": {
+    "club": "Fortuna Düsseldorf",
+    "competition": "L1"
+  },
+  "Karlsruhe Blue": {
+    "club": "Karlsruher SC",
+    "competition": "L1"
+  },
+  "Paderborn East-West": {
+    "club": "SC Paderborn 07",
+    "competition": "L1"
+  },
+  "Darmstadt Lilies": {
+    "club": "SV Darmstadt 98",
+    "competition": "L1"
+  },
+  "St Pauli Pirates": {
+    "club": "FC St. Pauli",
+    "competition": "L1"
+  },
+  "Kiel Storks": {
+    "club": "Holstein Kiel",
+    "competition": "L1"
+  },
+  "Bochum Ruhr": {
+    "club": "VfL Bochum",
+    "competition": "L1"
+  },
+  "Bielefeld Blues": {
+    "club": "Arminia Bielefeld",
+    "competition": "L1"
+  },
+  "Braunschweig Lions": {
+    "club": "Eintracht Braunschweig",
+    "competition": "L1"
+  },
+  "Furth Clover": {
+    "club": "Greuther Fürth",
+    "competition": "L1"
+  },
+  "Magdeburg Blue-White": {
+    "club": "1.FC Magdeburg",
+    "competition": "L1"
+  },
+  "Rostock Hanseatic": {
+    "club": "Hansa Rostock",
+    "competition": "L1"
+  },
+  "Dresden Power": {
+    "club": "Dynamo Dresden",
+    "competition": "L1"
+  },
+  "Duisburg Zebras": {
+    "club": "MSV Duisburg",
+    "competition": "L1"
+  },
+  "Essen Red-White": {
+    "club": "Rot-Weiss Essen",
+    "competition": "L1"
+  },
+  "Mannheim Baroque": {
+    "club": "Waldhof Mannheim",
+    "competition": "L1"
+  },
+  "Saarbrucken Blue-Black": {
+    "club": "1.FC Saarbrücken",
+    "competition": "L1"
+  },
+  "Regensburg Rivers": {
+    "club": "Jahn Regensburg",
+    "competition": "L1"
+  },
+  "Munster Eagles": {
+    "club": "Preußen Münster",
+    "competition": "L1"
+  },
+  "Amsterdam Artists": {
+    "club": "Ajax Amsterdam",
+    "competition": "NL1"
+  },
+  "Eindhoven Lamps": {
+    "club": "PSV Eindhoven",
+    "competition": "NL1"
+  },
+  "Rotterdam South": {
+    "club": "Feyenoord Rotterdam",
+    "competition": "NL1"
+  },
+  "Rotterdam Castle": {
+    "club": "Sparta Rotterdam",
+    "competition": "NL1"
+  },
+  "Alkmaar Cheese": {
+    "club": "AZ Alkmaar",
+    "competition": "NL1"
+  },
+  "Enschede Reds": {
+    "club": "Twente Enschede FC",
+    "competition": "NL1"
+  },
+  "Utrecht Cathedral": {
+    "club": "FC Utrecht",
+    "competition": "NL1"
+  },
+  "Arnhem Eagles": {
+    "club": "Vitesse Arnhem",
+    "competition": "NL1"
+  },
+  "Nijmegen Tricolour": {
+    "club": "NEC Nijmegen",
+    "competition": "NL1"
+  },
+  "Heerenveen Hearts": {
+    "club": "SC Heerenveen",
+    "competition": "NL1"
+  },
+  "Groningen Green-White": {
+    "club": "FC Groningen",
+    "competition": "NL1"
+  },
+  "Tilburg Tricolores": {
+    "club": "Willem II Tilburg",
+    "competition": "NL1"
+  },
+  "Breda Rats": {
+    "club": "NAC Breda",
+    "competition": "NL1"
+  },
+  "Almelo Black-White": {
+    "club": "Heracles Almelo",
+    "competition": "NL1"
+  },
+  "Zwolle Bluefingers": {
+    "club": "PEC Zwolle",
+    "competition": "NL1"
+  },
+  "Sittard Fortune": {
+    "club": "Fortuna Sittard",
+    "competition": "NL1"
+  },
+  "Waalwijk Yellow-Blue": {
+    "club": "RKC Waalwijk",
+    "competition": "NL1"
+  },
+  "Deventer Eagles": {
+    "club": "Go Ahead Eagles",
+    "competition": "NL1"
+  },
+  "Volendam Orange": {
+    "club": "FC Volendam",
+    "competition": "NL1"
+  },
+  "The Hague Storks": {
+    "club": "ADO Den Haag",
+    "competition": "NL1"
+  },
+  "Trondheim Trolls": {
+    "club": "Rosenborg BK",
+    "competition": "NO1"
+  },
+  "Molde Blue": {
+    "club": "Molde FK",
+    "competition": "NO1"
+  },
+  "Bodo Lightning": {
+    "club": "FK Bodø/Glimt",
+    "competition": "NO1"
+  },
+  "Bergen Fire": {
+    "club": "SK Brann",
+    "competition": "NO1"
+  },
+  "Stavanger Vikings": {
+    "club": "Viking FK",
+    "competition": "NO1"
+  },
+  "Oslo Valerenga": {
+    "club": "Vålerenga Fotball",
+    "competition": "NO1"
+  },
+  "Lillestrom Canaries": {
+    "club": "Lillestrøm SK",
+    "competition": "NO1"
+  },
+  "Drammen Godset": {
+    "club": "Strømsgodset IF",
+    "competition": "NO1"
+  },
+  "Skien Oddballs": {
+    "club": "Odds BK",
+    "competition": "NO1"
+  },
+  "Tromso Arctic": {
+    "club": "Tromsø IL",
+    "competition": "NO1"
+  },
+  "Kristiansand Start": {
+    "club": "IK Start",
+    "competition": "NO1"
+  },
+  "Fredrikstad Red-White": {
+    "club": "Fredrikstad FK",
+    "competition": "NO1"
+  },
+  "Sarpsborg Blue": {
+    "club": "Sarpsborg 08 FF",
+    "competition": "NO1"
+  },
+  "Haugesund Seagulls": {
+    "club": "FK Haugesund",
+    "competition": "NO1"
+  },
+  "Sandefjord Whalers": {
+    "club": "Sandefjord Fotball",
+    "competition": "NO1"
+  },
+  "Aalesund Orange": {
+    "club": "Aalesunds FK",
+    "competition": "NO1"
+  },
+  "Hamar Pride": {
+    "club": "Hamarkameratene",
+    "competition": "NO1"
+  },
+  "Moss Yellow-Black": {
+    "club": "Moss FK",
+    "competition": "NO1"
+  },
+  "Oslo Lynx": {
+    "club": "Lyn 1896 FK",
+    "competition": "NO1"
+  },
+  "Stabaek Blue": {
+    "club": "Stabæk Fotball",
+    "competition": "NO1"
+  },
+  "Rio Flamengo": {
+    "club": "CR Flamengo",
+    "competition": "BRA1"
+  },
+  "Sao Paulo Palmeiras": {
+    "club": "SE Palmeiras",
+    "competition": "BRA1"
+  },
+  "Sao Paulo Corinthians": {
+    "club": "SC Corinthians Paulista",
+    "competition": "BRA1"
+  },
+  "Rio Vasco": {
+    "club": "CR Vasco da Gama",
+    "competition": "BRA1"
+  },
+  "Rio Fluminense": {
+    "club": "Fluminense FC",
+    "competition": "BRA1"
+  },
+  "Rio Lone Star": {
+    "club": "Botafogo FR",
+    "competition": "BRA1"
+  },
+  "Santos Coast": {
+    "club": "Santos FC",
+    "competition": "BRA1"
+  },
+  "Sao Paulo Tricolor": {
+    "club": "São Paulo FC",
+    "competition": "BRA1"
+  },
+  "Porto Alegre Gremio": {
+    "club": "Grêmio FBPA",
+    "competition": "BRA1"
+  },
+  "Porto Alegre Internacional": {
+    "club": "SC Internacional",
+    "competition": "BRA1"
+  },
+  "Belo Horizonte Atletico": {
+    "club": "Clube Atlético Mineiro",
+    "competition": "BRA1"
+  },
+  "Belo Horizonte Cruzeiro": {
+    "club": "Cruzeiro Esporte Clube",
+    "competition": "BRA1"
+  },
+  "Curitiba Athletico": {
+    "club": "Athletico Paranaense",
+    "competition": "BRA1"
+  },
+  "Curitiba Coritiba": {
+    "club": "Coritiba FC",
+    "competition": "BRA1"
+  },
+  "Salvador Bahia": {
+    "club": "Esporte Clube Bahia",
+    "competition": "BRA1"
+  },
+  "Recife Lions": {
+    "club": "Sport Recife",
+    "competition": "BRA1"
+  },
+  "Fortaleza Tricolor": {
+    "club": "Fortaleza EC",
+    "competition": "BRA1"
+  },
+  "Ceara Black-White": {
+    "club": "Ceará SC",
+    "competition": "BRA1"
+  },
+  "Goiania Green": {
+    "club": "Goiás EC",
+    "competition": "BRA1"
+  },
+  "Braganca Red Bulls": {
+    "club": "Red Bull Bragantino",
+    "competition": "BRA1"
+  },
+  "Vitoria Red Lion": {
+    "club": "EC Vitória",
+    "competition": "BRA1"
+  },
+  "Recife Nautico": {
+    "club": "Náutico",
+    "competition": "BRA1"
+  },
+  "Campinas Ponte": {
+    "club": "Ponte Preta",
+    "competition": "BRA1"
+  },
+  "Campinas Guarani": {
+    "club": "Guarani FC",
+    "competition": "BRA1"
+  },
+  "Belo America": {
+    "club": "América Mineiro",
+    "competition": "BRA1"
+  },
+  "Rio America": {
+    "club": "America Football Club Rio de Janeiro",
+    "competition": "BRA1"
+  },
+  "Avai Island": {
+    "club": "Avaí FC",
+    "competition": "BRA1"
+  },
+  "Florianopolis Figueira": {
+    "club": "Figueirense FC",
+    "competition": "BRA1"
+  },
+  "Chapeco Green": {
+    "club": "Chapecoense",
+    "competition": "BRA1"
+  },
+  "Goias Vila": {
+    "club": "Vila Nova FC",
+    "competition": "BRA1"
+  },
+  "Belem Paysandu": {
+    "club": "Paysandu SC",
+    "competition": "BRA1"
+  },
+  "Belem Remo": {
+    "club": "Clube do Remo",
+    "competition": "BRA1"
+  },
+  "Maceio CRB": {
+    "club": "CRB",
+    "competition": "BRA1"
+  },
+  "Maceio CSA": {
+    "club": "CSA",
+    "competition": "BRA1"
+  },
+  "Natal ABC": {
+    "club": "ABC FC",
+    "competition": "BRA1"
+  },
+  "Recife Santa Cross": {
+    "club": "Santa Cruz FC",
+    "competition": "BRA1"
+  },
+  "Parana Londrina": {
+    "club": "Londrina EC",
+    "competition": "BRA1"
+  },
+  "Criciuma Tigers": {
+    "club": "Criciúma EC",
+    "competition": "BRA1"
+  },
+  "Caxias Juventude": {
+    "club": "EC Juventude",
+    "competition": "BRA1"
+  },
+  "Cuiaba Gold": {
+    "club": "Cuiabá EC",
+    "competition": "BRA1"
+  },
+  "Lisbon Eagles": {
+    "club": "SL Benfica",
+    "competition": "PO1"
+  },
+  "Porto Dragons": {
+    "club": "FC Porto",
+    "competition": "PO1"
+  },
+  "Lisbon Lions": {
+    "club": "Sporting CP",
+    "competition": "PO1"
+  },
+  "Braga Archbishops": {
+    "club": "SC Braga",
+    "competition": "PO1"
+  },
+  "Guimaraes Conquerors": {
+    "club": "Vitória Guimarães SC",
+    "competition": "PO1"
+  },
+  "Famalicao Blue-White": {
+    "club": "FC Famalicão",
+    "competition": "PO1"
+  },
+  "Boavista Checkers": {
+    "club": "Boavista FC",
+    "competition": "PO1"
+  },
+  "Rio Ave Vila": {
+    "club": "Rio Ave FC",
+    "competition": "PO1"
+  },
+  "Estoril Canaries": {
+    "club": "GD Estoril Praia",
+    "competition": "PO1"
+  },
+  "Barcelos Roosters": {
+    "club": "Gil Vicente FC",
+    "competition": "PO1"
+  },
+  "Moreira Green-White": {
+    "club": "Moreirense FC",
+    "competition": "PO1"
+  },
+  "Arouca Wolves": {
+    "club": "FC Arouca",
+    "competition": "PO1"
+  },
+  "Farense Algarve": {
+    "club": "SC Farense",
+    "competition": "PO1"
+  },
+  "Casa Pia Geese": {
+    "club": "Casa Pia AC",
+    "competition": "PO1"
+  },
+  "Madeira Nacional": {
+    "club": "CD Nacional",
+    "competition": "PO1"
+  },
+  "Madeira Maritimo": {
+    "club": "CS Marítimo",
+    "competition": "PO1"
+  },
+  "Setubal Sadinos": {
+    "club": "Vitória Setúbal FC",
+    "competition": "PO1"
+  },
+  "Coimbra Students": {
+    "club": "Académica Coimbra",
+    "competition": "PO1"
+  },
+  "Belenenses Cross": {
+    "club": "CF Os Belenenses",
+    "competition": "PO1"
+  },
+  "Pacos Beavers": {
+    "club": "FC Paços de Ferreira",
+    "competition": "PO1"
+  },
+  "Belgrade Red Constellation": {
+    "club": "Red Star Belgrade",
+    "competition": "SER1"
+  },
+  "Belgrade Black-White": {
+    "club": "FK Partizan Belgrade",
+    "competition": "SER1"
+  },
+  "Zagreb Blue": {
+    "club": "GNK Dinamo Zagreb",
+    "competition": "KR1"
+  },
+  "Split White": {
+    "club": "HNK Hajduk Split",
+    "competition": "KR1"
+  },
+  "Rijeka Armada": {
+    "club": "HNK Rijeka",
+    "competition": "KR1"
+  },
+  "Osijek Slavon": {
+    "club": "NK Osijek",
+    "competition": "KR1"
+  },
+  "Novi Sad Vojvodina": {
+    "club": "FK Vojvodina Novi Sad",
+    "competition": "SER1"
+  },
+  "Backa Topola Blue": {
+    "club": "FK TSC Bačka Topola",
+    "competition": "SER1"
+  },
+  "Cukarica Hills": {
+    "club": "FK Čukarički",
+    "competition": "SER1"
+  },
+  "Nis Radnicki Red": {
+    "club": "Radnički Niš",
+    "competition": "SER1"
+  },
+  "Sarajevo Maroon": {
+    "club": "FK Sarajevo",
+    "competition": "BOS1"
+  },
+  "Sarajevo Railway": {
+    "club": "FK Željezničar Sarajevo",
+    "competition": "BOS1"
+  },
+  "Banja Luka Red-Blue": {
+    "club": "Borac Banja Luka",
+    "competition": "BOS1"
+  },
+  "Mostar Bridge": {
+    "club": "HŠK Zrinjski Mostar",
+    "competition": "BOS1"
+  },
+  "Ljubljana Dragons": {
+    "club": "NK Olimpija Ljubljana",
+    "competition": "SL1"
+  },
+  "Maribor Violet": {
+    "club": "NK Maribor",
+    "competition": "SL1"
+  },
+  "Podgorica Blue": {
+    "club": "FK Budućnost Podgorica",
+    "competition": "MNE1"
+  },
+  "Skopje Red-Black": {
+    "club": "FK Vardar Skopje",
+    "competition": "MK1"
+  },
+  "Zagreb Locomotive": {
+    "club": "NK Lokomotiva Zagreb",
+    "competition": "KR1"
+  },
+  "Subotica Spartans": {
+    "club": "FK Spartak Subotica",
+    "competition": "SER1"
+  },
+  "Glasgow Hoops": {
+    "club": "Celtic FC",
+    "competition": "SC1"
+  },
+  "Glasgow Light Blues": {
+    "club": "Rangers FC",
+    "competition": "SC1"
+  },
+  "Edinburgh Hearts": {
+    "club": "Heart of Midlothian FC",
+    "competition": "SC1"
+  },
+  "Edinburgh Hibees": {
+    "club": "Hibernian FC",
+    "competition": "SC1"
+  },
+  "Aberdeen Reds": {
+    "club": "Aberdeen FC",
+    "competition": "SC1"
+  },
+  "Dundee Tangerines": {
+    "club": "Dundee United FC",
+    "competition": "SC1"
+  },
+  "Dundee Dark Blues": {
+    "club": "Dundee FC",
+    "competition": "SC1"
+  },
+  "Kilmarnock Blue-White": {
+    "club": "Kilmarnock FC",
+    "competition": "SC1"
+  },
+  "Motherwell Steel": {
+    "club": "Motherwell FC",
+    "competition": "SC1"
+  },
+  "Paisley Saints": {
+    "club": "St. Mirren FC",
+    "competition": "SC1"
+  },
+  "Perth Saints": {
+    "club": "St. Johnstone FC",
+    "competition": "SC1"
+  },
+  "Livingston Amber": {
+    "club": "Livingston FC",
+    "competition": "SC1"
+  },
+  "Ross County Stags": {
+    "club": "Ross County FC",
+    "competition": "SC1"
+  },
+  "Inverness Caley": {
+    "club": "Inverness Caledonian Thistle FC",
+    "competition": "SC1"
+  },
+  "Falkirk Navy": {
+    "club": "Falkirk FC",
+    "competition": "SC1"
+  },
+  "Dunfermline Pars": {
+    "club": "Dunfermline Athletic FC",
+    "competition": "SC1"
+  },
+  "Partick Jags": {
+    "club": "Partick Thistle FC",
+    "competition": "SC1"
+  },
+  "Greenock Morton Blue": {
+    "club": "Greenock Morton FC",
+    "competition": "SC1"
+  },
+  "Ayr Honest Men": {
+    "club": "Ayr United FC",
+    "competition": "SC1"
+  },
+  "Raith Rovers Blue": {
+    "club": "Raith Rovers FC",
+    "competition": "SC1"
+  },
+  "Dublin Shamrocks": {
+    "club": "Shamrock Rovers",
+    "competition": "IR1"
+  },
+  "Dublin Bohemes": {
+    "club": "Bohemian FC",
+    "competition": "IR1"
+  },
+  "Derry Candystripes": {
+    "club": "Derry City",
+    "competition": "IR1"
+  },
+  "Dundalk Lilywhites": {
+    "club": "Dundalk FC",
+    "competition": "IR1"
+  },
+  "Cork Rebels": {
+    "club": "Cork City",
+    "competition": "IR1"
+  },
+  "Sligo Bit-O-Red": {
+    "club": "Sligo Rovers",
+    "competition": "IR1"
+  },
+  "Waterford Blues": {
+    "club": "Waterford FC",
+    "competition": "IR1"
+  },
+  "Galway Tribes": {
+    "club": "Galway United FC",
+    "competition": "IR1"
+  },
+  "Drogheda Boyneside": {
+    "club": "Drogheda United FC",
+    "competition": "IR1"
+  },
+  "Shelbourne Reds": {
+    "club": "Shelbourne FC",
+    "competition": "IR1"
+  },
+  "Inchicore Saints": {
+    "club": "St. Patrick’s Athletic",
+    "competition": "IR1"
+  },
+  "Donegal Harps": {
+    "club": "Finn Harps",
+    "competition": "IR1"
+  },
+  "Limerick Treaty": {
+    "club": "Limerick FC",
+    "competition": "IR1"
+  },
+  "Bray Seagulls": {
+    "club": "Bray Wanderers",
+    "competition": "IR1"
+  },
+  "Cobh Rams": {
+    "club": "Cobh Ramblers",
+    "competition": "IR1"
+  },
+  "Wexford Youths": {
+    "club": "Wexford FC",
+    "competition": "IR1"
+  },
+  "Athlone Midlands": {
+    "club": "Athlone Town",
+    "competition": "IR1"
+  },
+  "Longford Red-Black": {
+    "club": "Longford Town",
+    "competition": "IR1"
+  },
+  "Dublin Scholars": {
+    "club": "University College Dublin",
+    "competition": "IR1"
+  },
+  "Kilkenny Cats": {
+    "club": "Kilkenny City",
+    "competition": "IR1"
+  },
+  "Basel Red-Blue": {
+    "club": "FC Basel 1893",
+    "competition": "C1"
+  },
+  "Zurich Hoppers": {
+    "club": "Grasshopper Club Zurich",
+    "competition": "C1"
+  },
+  "Bern Youngsters": {
+    "club": "BSC Young Boys",
+    "competition": "C1"
+  },
+  "Zurich Blue-White": {
+    "club": "FC Zürich",
+    "competition": "C1"
+  },
+  "Geneva Servette": {
+    "club": "Servette FC",
+    "competition": "C1"
+  },
+  "Lugano Black-White": {
+    "club": "FC Lugano",
+    "competition": "C1"
+  },
+  "Lucerne Blue": {
+    "club": "FC Luzern",
+    "competition": "C1"
+  },
+  "St Gallen Green": {
+    "club": "FC St. Gallen 1879",
+    "competition": "C1"
+  },
+  "Sion Valais": {
+    "club": "FC Sion",
+    "competition": "C1"
+  },
+  "Lausanne Blue-White": {
+    "club": "FC Lausanne-Sport",
+    "competition": "C1"
+  },
+  "Winterthur Lions": {
+    "club": "FC Winterthur",
+    "competition": "C1"
+  },
+  "Thun Alps": {
+    "club": "FC Thun 1898",
+    "competition": "C1"
+  },
+  "Neuchatel Black-Red": {
+    "club": "Neuchâtel Xamax FCS",
+    "competition": "C1"
+  },
+  "Aarau Argovia": {
+    "club": "FC Aarau",
+    "competition": "C1"
+  },
+  "Bellinzona Castles": {
+    "club": "AC Bellinzona",
+    "competition": "C1"
+  },
+  "Schaffhausen Rhine": {
+    "club": "FC Schaffhausen",
+    "competition": "C1"
+  },
+  "Wil Abbey": {
+    "club": "FC Wil 1900",
+    "competition": "C1"
+  },
+  "Vaduz Crown": {
+    "club": "FC Vaduz",
+    "competition": "C1"
+  },
+  "Xamax Lakeside": {
+    "club": "Yverdon Sport FC",
+    "competition": "C1"
+  },
+  "Chiasso Border": {
+    "club": "FC Chiasso",
+    "competition": "C1"
+  },
+  "Istanbul Lions": {
+    "club": "Galatasaray",
+    "competition": "TR1"
+  },
+  "Istanbul Canaries": {
+    "club": "Fenerbahçe",
+    "competition": "TR1"
+  },
+  "Istanbul Black Eagles": {
+    "club": "Beşiktaş JK",
+    "competition": "TR1"
+  },
+  "Trabzon Storm": {
+    "club": "Trabzonspor",
+    "competition": "TR1"
+  },
+  "Istanbul Basak Owls": {
+    "club": "Başakşehir FK",
+    "competition": "TR1"
+  },
+  "Bursa Crocodiles": {
+    "club": "Bursaspor",
+    "competition": "TR1"
+  },
+  "Adana Blue Lightning": {
+    "club": "Adana Demirspor",
+    "competition": "TR1"
+  },
+  "Adana Iron": {
+    "club": "Adanaspor",
+    "competition": "TR1"
+  },
+  "Konya Eagles": {
+    "club": "Konyaspor",
+    "competition": "TR1"
+  },
+  "Antalya Scorpions": {
+    "club": "Antalyaspor",
+    "competition": "TR1"
+  },
+  "Alanya Orange-Green": {
+    "club": "Alanyaspor",
+    "competition": "TR1"
+  },
+  "Sivas Braves": {
+    "club": "Sivasspor",
+    "competition": "TR1"
+  },
+  "Kayseri Anatolian Stars": {
+    "club": "Kayserispor",
+    "competition": "TR1"
+  },
+  "Rize Tea": {
+    "club": "Çaykur Rizespor",
+    "competition": "TR1"
+  },
+  "Gaziantep Falcons": {
+    "club": "Gaziantep FK",
+    "competition": "TR1"
+  },
+  "Samsun Red Lightning": {
+    "club": "Samsunspor",
+    "competition": "TR1"
+  },
+  "Goztepe Izmir": {
+    "club": "Göztepe",
+    "competition": "TR1"
+  },
+  "Izmir Altay": {
+    "club": "Altay SK",
+    "competition": "TR1"
+  },
+  "Ankara Power": {
+    "club": "MKE Ankaragücü",
+    "competition": "TR1"
+  },
+  "Eskisehir Red-Black": {
+    "club": "Eskişehirspor",
+    "competition": "TR1"
+  },
+  "Piraeus Red-White": {
+    "club": "Olympiacos Piraeus",
+    "competition": "GR1"
+  },
+  "Athens Shamrock": {
+    "club": "Panathinaikos FC",
+    "competition": "GR1"
+  },
+  "Athens Double Eagles": {
+    "club": "AEK Athens",
+    "competition": "GR1"
+  },
+  "Thessaloniki Double Eagle": {
+    "club": "PAOK Thessaloniki",
+    "competition": "GR1"
+  },
+  "Thessaloniki War God": {
+    "club": "Aris Thessaloniki",
+    "competition": "GR1"
+  },
+  "Heraklion Snakes": {
+    "club": "OFI Crete FC",
+    "competition": "GR1"
+  },
+  "Tripoli Stars": {
+    "club": "Asteras Tripolis",
+    "competition": "GR1"
+  },
+  "Crete Blue-White": {
+    "club": "AO Chania",
+    "competition": "GR1"
+  },
+  "Volos Argonauts": {
+    "club": "Volos NPS",
+    "competition": "GR1"
+  },
+  "Peristeri Fearless": {
+    "club": "Atromitos Athens",
+    "competition": "GR1"
+  },
+  "Smyrna Blue-Red": {
+    "club": "Panionios Athens",
+    "competition": "GR1"
+  },
+  "Larissa Crimson": {
+    "club": "AE Larisa",
+    "competition": "GR1"
+  },
+  "Ioannina Epirus": {
+    "club": "PAS Giannina",
+    "competition": "GR1"
+  },
+  "Agrinio Canaries": {
+    "club": "Panetolikos GFS",
+    "competition": "GR1"
+  },
+  "Lamia Blue-White": {
+    "club": "PAS Lamia 1964",
+    "competition": "GR1"
+  },
+  "Xanthi Thrace": {
+    "club": "Xanthi FC",
+    "competition": "GR1"
+  },
+  "Kavala Blue": {
+    "club": "AO Kavala",
+    "competition": "GR1"
+  },
+  "Rhodes Deer": {
+    "club": "AS Rodos",
+    "competition": "GR1"
+  },
+  "Patras Red-Black": {
+    "club": "Panachaiki GE",
+    "competition": "GR1"
+  },
+  "Nikaia Blue-White": {
+    "club": "Ionikos Nikeas",
+    "competition": "GR1"
+  },
+  "Thessaloniki Demigods": {
+    "club": "Iraklis Thessaloniki",
+    "competition": "GR1"
+  },
+  "Smyrna Light": {
+    "club": "Apollon Smyrnis",
+    "competition": "GR1"
+  },
+  "Athens Panion": {
+    "club": "Athens Kallithea FC",
+    "competition": "GR1"
+  },
+  "Piraeus Ionic": {
+    "club": "Proodeftiki Neolea",
+    "competition": "GR1"
+  },
+  "Kalamata Black Storm": {
+    "club": "Kalamata FC",
+    "competition": "GR1"
+  },
+  "Kallithea South Athens": {
+    "club": "Egaleo AO",
+    "competition": "GR1"
+  },
+  "Chania Crete": {
+    "club": "Chania FC",
+    "competition": "GR1"
+  },
+  "Ergotelis Heraklion": {
+    "club": "Ergotelis",
+    "competition": "GR1"
+  },
+  "Levadiakos Green-Blue": {
+    "club": "Levadiakos",
+    "competition": "GR1"
+  },
+  "Veria Queen North": {
+    "club": "Veria NFC",
+    "competition": "GR1"
+  },
+  "Drama Black Eagles": {
+    "club": "Doxa Dramas",
+    "competition": "GR1"
+  },
+  "Serres Lions": {
+    "club": "Panserraikos",
+    "competition": "GR1"
+  },
+  "Kozani Red": {
+    "club": "FS Kozani",
+    "competition": "GR1"
+  },
+  "Niki Volos Blue": {
+    "club": "Niki Volou",
+    "competition": "GR1"
+  },
+  "Karditsa Renaissance": {
+    "club": "Anagennisi Karditsas",
+    "competition": "GR1"
+  },
+  "Trikala Blue": {
+    "club": "AO Trikala",
+    "competition": "GR1"
+  },
+  "Corfu Phaeacians": {
+    "club": "AO Kerkyra",
+    "competition": "GR1"
+  },
+  "Rethymno Cretan": {
+    "club": "Episkopi FC",
+    "competition": "GR1"
+  },
+  "Elefsina Shipyards": {
+    "club": "Panelefsiniakos AO",
+    "competition": "GR1"
+  },
+  "Aigaleo Blue-White": {
+    "club": "Aigaleo FC",
+    "competition": "GR1"
+  }
+}

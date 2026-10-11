@@ -1,0 +1,84 @@
+name: Generate real player rosters
+
+on:
+  push:
+    branches:
+      - "arena/824a4509-menager-game"
+    paths:
+      - .github/workflows/generate-real-player-rosters.yml
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out roster tooling
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download pinned research snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/football-data
+          curl --fail --location --retry 3 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github.raw+json" \
+            "https://api.github.com/repos/SofiTal/fc26-player-analytics/contents/data/raw/EAFC26-Men.csv?ref=e44f186d6f06dd8452aaf54c7921ba66c961f637" \
+            --output /tmp/football-data/fc26-men.csv
+          curl --fail --location --retry 3 \
+            "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/players.csv.gz" \
+            --output /tmp/football-data/players.csv.gz
+          curl --fail --location --retry 3 \
+            "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/clubs.csv.gz" \
+            --output /tmp/football-data/clubs.csv.gz
+          curl --fail --location --retry 3 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github.raw+json" \
+            "https://api.github.com/repos/salimt/football-datasets/contents/datalake/transfermarkt/player_profiles/player_profiles.csv?ref=main" \
+            --output /tmp/football-data/player-profiles.csv
+          curl --fail --location --retry 3 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github.raw+json" \
+            "https://api.github.com/repos/salimt/football-datasets/contents/datalake/transfermarkt/team_details/team_details.csv?ref=main" \
+            --output /tmp/football-data/team-details.csv
+
+      - name: Build and verify compact offline ledger
+        run: |
+          python scripts/data/build_real_player_rosters.py \
+            --club-sources scripts/data/club-player-sources.json \
+            --fc26 /tmp/football-data/fc26-men.csv \
+            --tm-players /tmp/football-data/players.csv.gz \
+            --tm-clubs /tmp/football-data/clubs.csv.gz \
+            --profiles /tmp/football-data/player-profiles.csv \
+            --team-details /tmp/football-data/team-details.csv \
+            --output src/database/data/real-player-rosters.json \
+            --report scripts/data/real-player-rosters.report.json \
+            --fc26-revision e44f186d6f06dd8452aaf54c7921ba66c961f637 \
+            --transfermarkt-revision 8aabddd33dfeea0e6664266cf37844c6a7b7d3cd
+          python - <<'PY'
+          import json
+          data = json.load(open('src/database/data/real-player-rosters.json', encoding='utf-8'))
+          players = [player for roster in data['rosters'].values() for player in roster]
+          assert len(data['rosters']) == 400
+          assert len(players) == 10_000
+          assert len({player[0] for player in players}) == 10_000
+          assert len({player[1].casefold() for player in players}) == 10_000
+          assert all(len(roster) == 25 for roster in data['rosters'].values())
+          assert all('overall' not in source for source in data['sources'])
+          PY
+
+      - name: Publish generated database to this branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/database/data/real-player-rosters.json
+          git add scripts/data/real-player-rosters.report.json
+          git rm .github/workflows/generate-real-player-rosters.yml
+          git commit -m "Generate offline real player roster ledger"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
