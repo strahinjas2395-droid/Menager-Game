@@ -32,11 +32,15 @@ jobs:
             "https://api.github.com/repos/SofiTal/fc26-player-analytics/contents/data/raw/EAFC26-Men.csv?ref=e44f186d6f06dd8452aaf54c7921ba66c961f637" \
             --output /tmp/football-data/fc26-men.csv
           curl --fail --location --retry 3 \
-            "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/players.csv.gz" \
-            --output /tmp/football-data/players.csv.gz
-          curl --fail --location --retry 3 \
-            "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/clubs.csv.gz" \
-            --output /tmp/football-data/clubs.csv.gz
+            "https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/transfermarkt-datasets.zip" \
+            --output /tmp/football-data/transfermarkt-datasets.zip
+          unzip -q /tmp/football-data/transfermarkt-datasets.zip -d /tmp/football-data/transfermarkt
+          find /tmp/football-data/transfermarkt -name 'players.csv' -print -quit \
+            | xargs -r -I '{}' cp '{}' /tmp/football-data/players.csv
+          find /tmp/football-data/transfermarkt -name 'clubs.csv' -print -quit \
+            | xargs -r -I '{}' cp '{}' /tmp/football-data/clubs.csv
+          test -s /tmp/football-data/players.csv
+          test -s /tmp/football-data/clubs.csv
           curl --fail --location --retry 3 \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github.raw+json" \
@@ -53,8 +57,8 @@ jobs:
           python scripts/data/build_real_player_rosters.py \
             --club-sources scripts/data/club-player-sources.json \
             --fc26 /tmp/football-data/fc26-men.csv \
-            --tm-players /tmp/football-data/players.csv.gz \
-            --tm-clubs /tmp/football-data/clubs.csv.gz \
+            --tm-players /tmp/football-data/players.csv \
+            --tm-clubs /tmp/football-data/clubs.csv \
             --profiles /tmp/football-data/player-profiles.csv \
             --team-details /tmp/football-data/team-details.csv \
             --output src/database/data/real-player-rosters.json \
