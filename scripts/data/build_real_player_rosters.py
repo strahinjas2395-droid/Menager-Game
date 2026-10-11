@@ -3,8 +3,8 @@
 
 The raw research snapshots are intentionally not committed. This script consumes:
 - EA SPORTS FC 26 men's player CSV (detailed current-player snapshot)
-- dcaribou/transfermarkt-datasets players/clubs CSVs (CC0 broad coverage)
-- optional later Transfermarkt-derived profile/team CSVs for transfer updates
+- a pinned September 2026 Transfermarkt-derived profile/team snapshot
+- optional later profile/team CSVs for transfer updates
 
 Only factual identity/body/position fields are retained. No source "overall" value is
 written to the game database.
@@ -487,7 +487,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--fc26-revision", required=True)
-    parser.add_argument("--transfermarkt-revision", required=True)
+    parser.add_argument("--profile-revision", required=True)
     args = parser.parse_args()
 
     sources: dict[str, dict[str, str]] = json.loads(args.club_sources.read_text(encoding="utf-8"))
@@ -593,9 +593,9 @@ def main() -> None:
                 "revision": args.fc26_revision,
             },
             {
-                "name": "transfermarkt-datasets (CC0)",
-                "repository": "https://github.com/dcaribou/transfermarkt-datasets",
-                "revision": args.transfermarkt_revision,
+                "name": "September 2026 Transfermarkt-derived player profiles",
+                "repository": "https://github.com/salimt/football-datasets",
+                "revision": args.profile_revision,
             },
         ],
         "tuple": ["identityId", "fullName", "age", "nationality", "position", "preferredFoot", "height", "weight", "secondaryPositions"],
